@@ -20,7 +20,7 @@
       if (this._booted) return;
       this._booted = true;
 
-      this.style.cssText = "display:block;height:100%;overflow:auto;background:transparent;";
+      this.style.cssText = "display:block;height:100%;overflow:auto;";
 
       for (const css of ["styles.css", "home.css", "music.css", "dashboard.css"]) {
         const link = document.createElement("link");
