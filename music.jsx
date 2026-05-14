@@ -8,10 +8,8 @@ function MusicPage() {
   const hass = useHass();
   const cfg  = window.AETHER_CONFIG;
 
-  const [primaryId, setPrimaryId] = React.useState(() => {
-    const p = cfg.rooms.find(r => r.primary);
-    return p?.id || cfg.rooms[0]?.id;
-  });
+  const [primaryId, setPrimaryId] = React.useState(null); // resolved from hass below
+  const [userSelectedPrimary, setUserSelectedPrimary] = React.useState(false);
   const [drag, setDrag]       = React.useState(null);
   const [over, setOver]       = React.useState(null);
   const [tab, setTab]         = React.useState("Library");
@@ -39,6 +37,18 @@ function MusicPage() {
       };
     });
   }, [hass, cfg.rooms]);
+
+  // Auto-pick primary: if the user hasn't selected a room manually, prefer the
+  // first room that is actively playing, fall back to first with a real entity,
+  // fall back to the configured primary, then first room overall.
+  React.useEffect(() => {
+    if (userSelectedPrimary && primaryId) return;
+    const firstPlaying  = liveRooms.find(r => r.playing);
+    const firstWithData = liveRooms.find(r => r.entity);
+    const configured    = cfg.rooms.find(r => r.primary);
+    const pick = firstPlaying || firstWithData || configured || cfg.rooms[0];
+    if (pick && pick.id !== primaryId) setPrimaryId(pick.id);
+  }, [liveRooms, userSelectedPrimary, primaryId, cfg.rooms]);
 
   const primary        = liveRooms.find(r => r.id === primaryId) || liveRooms[0];
   const primaryEntity  = primary?.entity;
@@ -185,7 +195,7 @@ function MusicPage() {
                 onDragLeave={onDragLeave()}
                 onDrop={onDrop(room.id)}
                 onDragEnd={onDragEnd}
-                onClick={() => setPrimaryId(room.id)}
+                onClick={() => { setPrimaryId(room.id); setUserSelectedPrimary(true); }}
                 title={room.entity ? "Drag onto another room to group" : `Player offline (${room.entityId})`}
               >
                 <Avatar colors={room.color} />
