@@ -1,26 +1,29 @@
 /* Music page — wired to Music Assistant / media_player entities via hass.
    Reads live state from hass.states[room.mediaPlayer], renders rooms rail
    with real playing/track/artist/volume, drives transport + per-room
-   controls via media_player.* services, browses MA library through the
-   media_player/browse_media WebSocket call. */
+   controls via media_player.* services, and browses + searches MA library
+   through a single Library component with stack-based navigation. */
 
 function MusicPage() {
   const hass = useHass();
   const cfg  = window.AETHER_CONFIG;
 
-  const [primaryId, setPrimaryId] = React.useState(null); // resolved from hass below
-  const [userSelectedPrimary, setUserSelectedPrimary] = React.useState(false);
-  const [drag, setDrag]       = React.useState(null);
-  const [over, setOver]       = React.useState(null);
-  const [tab, setTab]         = React.useState("Library");
-  const [search, setSearch]   = React.useState("");
+  // Keep hass behind a ref so library effects don't re-run on every state
+  // tick (which caused the panel to flash / reset).
+  const hassRef = React.useRef(hass);
+  hassRef.current = hass;
 
-  // ─── Live room data derived from hass.states ─────────────────────────────
-  // Two entities per room: mediaPlayer is the Music Assistant wrapper used
-  // for control (search, play, transport, volume — Sonos doesn't support
-  // search_media). displayPlayer is the Sonos integration entity used as a
-  // fallback display when something is playing outside Aether. The rail
-  // reads whichever entity is most active.
+  const [primaryId, setPrimaryId]                 = React.useState(null);
+  const [userSelectedPrimary, setUserSelectedPrimary] = React.useState(false);
+  const [drag, setDrag]     = React.useState(null);
+  const [over, setOver]     = React.useState(null);
+  const [tab, setTab]       = React.useState("Library");
+  const [search, setSearch] = React.useState("");
+
+  // ─── Live room data ──────────────────────────────────────────────────────
+  // mediaPlayer (MA wrapper) is the control entity. displayPlayer (Sonos
+  // bare) mirrors externally-controlled playback. The rail reads from
+  // whichever sibling is most active; services always target mediaPlayer.
   const liveRooms = React.useMemo(() => {
     const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
     const mapped = cfg.rooms.map(room => {
@@ -33,8 +36,8 @@ function MusicPage() {
       const groupMembers = a.group_members || ctrl?.attributes?.group_members || [];
       return {
         ...room,
-        entity:   active,        // display attrs come from here
-        ctrl,                    // services target this entity_id
+        entity:   active,
+        ctrl,
         entityId: room.mediaPlayer,
         state:    active?.state || "unavailable",
         playing:  active?.state === "playing",
@@ -52,23 +55,23 @@ function MusicPage() {
     return mapped.sort((a, b) => score(a.state) - score(b.state));
   }, [hass, cfg.rooms]);
 
-  // Auto-pick primary: if the user hasn't selected a room manually, prefer the
-  // first room that is actively playing, fall back to first with a real entity,
-  // fall back to the configured primary, then first room overall.
+  // Auto-primary: pick the first playing room. Once the user explicitly
+  // selects a room, lock that choice — don't fight live state.
   React.useEffect(() => {
-    if (userSelectedPrimary && primaryId) return;
+    if (userSelectedPrimary) return;
     const firstPlaying  = liveRooms.find(r => r.playing);
     const firstWithData = liveRooms.find(r => r.entity);
     const configured    = cfg.rooms.find(r => r.primary);
     const pick = firstPlaying || firstWithData || configured || cfg.rooms[0];
     if (pick && pick.id !== primaryId) setPrimaryId(pick.id);
-  }, [liveRooms, userSelectedPrimary, primaryId, cfg.rooms]);
+  }, [liveRooms, userSelectedPrimary, cfg.rooms]);
 
   const primary        = liveRooms.find(r => r.id === primaryId) || liveRooms[0];
   const primaryEntity  = primary?.entity;
+  const primaryCtrl    = primary?.ctrl;
   const playingPrimary = primary?.playing;
 
-  // ─── Live progress (ticks every second from media_position) ──────────────
+  // ─── Live progress ───────────────────────────────────────────────────────
   const duration = primaryEntity?.attributes?.media_duration || 0;
   const [progress, setProgress] = React.useState(0);
   React.useEffect(() => {
@@ -93,43 +96,41 @@ function MusicPage() {
     duration,
   ]);
 
-  // ─── Service helpers ─────────────────────────────────────────────────────
+  // ─── Service helpers (always target the MA wrapper) ──────────────────────
   const svc = (service, data) => callService(hass, service, data);
-  const togglePrimary = () => primaryEntity && svc(
+  const togglePrimary = () => primary?.entityId && svc(
     playingPrimary ? "media_player.media_pause" : "media_player.media_play",
     { entity_id: primary.entityId }
   );
-  const skipNext  = () => primaryEntity && svc("media_player.media_next_track", { entity_id: primary.entityId });
-  const skipPrev  = () => primaryEntity && svc("media_player.media_previous_track", { entity_id: primary.entityId });
-  const toggleShuffle = () => primaryEntity && svc("media_player.shuffle_set", {
+  const skipNext  = () => primary?.entityId && svc("media_player.media_next_track", { entity_id: primary.entityId });
+  const skipPrev  = () => primary?.entityId && svc("media_player.media_previous_track", { entity_id: primary.entityId });
+  const toggleShuffle = () => primary?.entityId && svc("media_player.shuffle_set", {
     entity_id: primary.entityId,
-    shuffle: !primaryEntity?.attributes?.shuffle,
+    shuffle: !primaryCtrl?.attributes?.shuffle,
   });
   const toggleRepeat = () => {
-    if (!primaryEntity) return;
-    const cur = primaryEntity?.attributes?.repeat || "off";
+    if (!primary?.entityId) return;
+    const cur = primaryCtrl?.attributes?.repeat || "off";
     const next = cur === "off" ? "all" : cur === "all" ? "one" : "off";
     svc("media_player.repeat_set", { entity_id: primary.entityId, repeat: next });
   };
-  const setVol = (v) => primaryEntity && svc("media_player.volume_set", {
-    entity_id: primary.entityId,
-    volume_level: v / 100,
+  const setVol = (v) => primary?.entityId && svc("media_player.volume_set", {
+    entity_id: primary.entityId, volume_level: v / 100,
   });
-  const seek = (s) => primaryEntity && svc("media_player.media_seek", {
-    entity_id: primary.entityId,
-    seek_position: s,
+  const seek = (s) => primary?.entityId && svc("media_player.media_seek", {
+    entity_id: primary.entityId, seek_position: s,
   });
-  const playMedia = (mediaContentId, mediaContentType) => primaryEntity && svc("media_player.play_media", {
+  const playMedia = (mediaContentId, mediaContentType) => primary?.entityId && svc("media_player.play_media", {
     entity_id: primary.entityId,
     media_content_id: mediaContentId,
     media_content_type: mediaContentType,
   });
   const togglePerRoom = (room) => {
-    if (!room.entity) return;
+    if (!room.entityId) return;
     svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.entityId });
   };
 
-  // ─── Drag-and-drop room grouping (calls media_player.join) ───────────────
+  // ─── Drag-and-drop grouping ──────────────────────────────────────────────
   const onDragStart = (id) => (e) => {
     setDrag(id);
     e.dataTransfer.effectAllowed = "move";
@@ -142,10 +143,7 @@ function MusicPage() {
     if (!drag || drag === targetId) { setDrag(null); setOver(null); return; }
     const dragged = liveRooms.find(r => r.id === drag);
     const target  = liveRooms.find(r => r.id === targetId);
-    if (!dragged?.entityId || !target?.entityId) {
-      setDrag(null); setOver(null);
-      return;
-    }
+    if (!dragged?.entityId || !target?.entityId) { setDrag(null); setOver(null); return; }
     try {
       await svc("media_player.join", {
         entity_id: target.entityId,
@@ -157,7 +155,7 @@ function MusicPage() {
     setDrag(null); setOver(null);
   };
   const onDragEnd = () => { setDrag(null); setOver(null); };
-  const ungroupPrimary = () => primaryEntity?.attributes?.group_members?.length > 1
+  const ungroupPrimary = () => primaryCtrl?.attributes?.group_members?.length > 1
     && svc("media_player.unjoin", { entity_id: primary.entityId });
 
   if (!hass) {
@@ -222,8 +220,7 @@ function MusicPage() {
                     {room.playing && <Bars />}
                   </span>
                   <span className="room-status">
-                    {room.playing && room.track
-                      ? room.track
+                    {room.playing && room.track ? room.track
                       : room.state === "unavailable" ? "Offline"
                       : "Idle"}
                   </span>
@@ -278,11 +275,11 @@ function MusicPage() {
               <div className="np-actions">
                 <button className="action" title="Like (coming soon)"><Icon name="heart" /> Like</button>
                 <button
-                  className={"action" + (primaryEntity?.attributes?.group_members?.length > 1 ? " on" : "")}
+                  className={"action" + (primaryCtrl?.attributes?.group_members?.length > 1 ? " on" : "")}
                   onClick={ungroupPrimary}
-                  title={primaryEntity?.attributes?.group_members?.length > 1 ? "Ungroup" : "Drag a room onto this one to group"}
+                  title={primaryCtrl?.attributes?.group_members?.length > 1 ? "Ungroup" : "Drag a room onto this one to group"}
                 >
-                  <Icon name="group" /> {primaryEntity?.attributes?.group_members?.length > 1 ? `Grouped · ${primaryEntity.attributes.group_members.length}` : "Group"}
+                  <Icon name="group" /> {primaryCtrl?.attributes?.group_members?.length > 1 ? `Grouped · ${primaryCtrl.attributes.group_members.length}` : "Group"}
                 </button>
                 <button className="action" style={{ padding: "7px 10px" }}><Icon name="more" /></button>
               </div>
@@ -309,7 +306,7 @@ function MusicPage() {
           <div className="transport">
             <div />
             <button
-              className={"t-icon" + (primaryEntity?.attributes?.shuffle ? " on" : "")}
+              className={"t-icon" + (primaryCtrl?.attributes?.shuffle ? " on" : "")}
               title="Shuffle"
               onClick={toggleShuffle}
             >
@@ -325,8 +322,8 @@ function MusicPage() {
             </button>
             <button className="t-icon" title="Next" onClick={skipNext}><Icon name="next" size={20} /></button>
             <button
-              className={"t-icon" + (primaryEntity?.attributes?.repeat && primaryEntity.attributes.repeat !== "off" ? " on" : "")}
-              title={`Repeat (${primaryEntity?.attributes?.repeat || "off"})`}
+              className={"t-icon" + (primaryCtrl?.attributes?.repeat && primaryCtrl.attributes.repeat !== "off" ? " on" : "")}
+              title={`Repeat (${primaryCtrl?.attributes?.repeat || "off"})`}
               onClick={toggleRepeat}
             >
               <Icon name="repeat" size={18} />
@@ -362,327 +359,340 @@ function MusicPage() {
               ))}
             </div>
             <div className="lib-service">
-              {primaryEntity?.attributes?.app_name || "Music Assistant"}
+              {primaryCtrl?.attributes?.app_name || "Music Assistant"}
             </div>
           </div>
 
-          {tab === "Search" ? (
-            <LibSearch
-              key={"search-" + primary?.entityId}
-              entityId={primary?.entityId}
-              hass={hass}
-              playMedia={playMedia}
-              initialQuery={search}
-            />
-          ) : (
-            <LibBrowse
-              key={tab + "-" + primary?.entityId}
-              entityId={primary?.entityId}
-              hass={hass}
-              playMedia={playMedia}
-              autoDrill={LIB_TAB_TARGETS[tab]}
-            />
-          )}
+          <Library
+            key={tab + "-" + primary?.entityId}
+            entityId={primary?.entityId}
+            hassRef={hassRef}
+            playMedia={playMedia}
+            tab={tab}
+            externalQuery={search}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-// Per-tab default location inside the browse_media tree. Aether drills into
-// the matching root child (case-insensitive title) before showing items so
-// each tab lands somewhere useful instead of the generic provider list.
+// Per-tab default location inside the browse_media tree.
 const LIB_TAB_TARGETS = {
   "Listen Now": ["Favorites", "Music Assistant", "Recently Played"],
-  "Browse":     null, // root
+  "Browse":     null,
   "Radio":      ["Radio Browser", "Radio stations", "Radio"],
   "Library":    ["Music Library", "Library", "Music Assistant"],
 };
 
-// Browses media via the media_player/browse_media WebSocket call. When
-// autoDrill is provided it drills one level into the first matching child
-// title (or chain of titles) and treats that as the effective root.
-function LibBrowse({ entityId, hass, playMedia, autoDrill }) {
-  const [path, setPath]       = React.useState([]);
-  const [root, setRoot]       = React.useState(null);
+// ─── Unified Library: stack-based navigation across browse + search ──────
+function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
+  // Each entry is { kind: "browse" | "search", node?, items?, query?, title? }
+  const [stack, setStack]     = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
   const [err, setErr]         = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
+  const [query, setQuery]     = React.useState(externalQuery || "");
 
+  // Sync external query (top speakers-card search bar)
   React.useEffect(() => {
-    if (!entityId || !hass) return;
+    if (externalQuery !== undefined) setQuery(externalQuery);
+  }, [externalQuery]);
+
+  // Initial load on tab/entity change. Intentionally does NOT depend on hass
+  // to avoid refetching on every state tick.
+  React.useEffect(() => {
+    if (!entityId || !hassRef.current) return;
+    setErr(null);
+    setStack([]);
+    if (tab === "Search") {
+      if (query.trim()) runSearch(query.trim());
+    } else {
+      runBrowse();
+    }
+  }, [tab, entityId]);
+
+  // Debounced search re-run when query changes (Search tab only).
+  React.useEffect(() => {
+    if (tab !== "Search" || !entityId || !hassRef.current) return;
+    const term = query.trim();
+    if (!term) { setStack([]); return; }
+    const id = setTimeout(() => runSearch(term), 300);
+    return () => clearTimeout(id);
+  }, [query, tab, entityId]);
+
+  async function runBrowse() {
     setLoading(true);
     setErr(null);
-    (async () => {
-      try {
-        let node = await hass.callWS({
-          type: "media_player/browse_media",
-          entity_id: entityId,
-        });
-        if (autoDrill && Array.isArray(autoDrill)) {
-          for (const wantedTitle of autoDrill) {
-            const child = (node.children || []).find(
-              (c) => c.title?.toLowerCase() === wantedTitle.toLowerCase()
-            );
-            if (child && child.can_expand) {
-              node = await hass.callWS({
-                type: "media_player/browse_media",
-                entity_id: entityId,
-                media_content_id: child.media_content_id,
-                media_content_type: child.media_content_type,
-              });
-              break;
-            }
-          }
-        }
-        setRoot(node);
-        setPath([]);
-      } catch (e) {
-        setErr(e?.message || String(e));
-      }
-      setLoading(false);
-    })();
-  }, [entityId, hass, JSON.stringify(autoDrill)]);
-
-  const current = path.length ? path[path.length - 1] : root;
-
-  const enter = async (child) => {
-    if (child.can_play && !child.can_expand) {
-      playMedia(child.media_content_id, child.media_content_type);
-      return;
-    }
-    if (!child.can_expand) return;
-    setLoading(true);
     try {
-      const expanded = await hass.callWS({
+      let node = await hassRef.current.callWS({
         type: "media_player/browse_media",
         entity_id: entityId,
-        media_content_id: child.media_content_id,
-        media_content_type: child.media_content_type,
       });
-      setPath([...path, expanded]);
+      const targets = LIB_TAB_TARGETS[tab];
+      if (Array.isArray(targets)) {
+        for (const want of targets) {
+          const child = (node.children || []).find(
+            (c) => c.title?.toLowerCase() === want.toLowerCase()
+          );
+          if (child && child.can_expand) {
+            node = await hassRef.current.callWS({
+              type: "media_player/browse_media",
+              entity_id: entityId,
+              media_content_id: child.media_content_id,
+              media_content_type: child.media_content_type,
+            });
+            break;
+          }
+        }
+      }
+      setStack([{ kind: "browse", node, title: node.title || "Browse" }]);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
+    setLoading(false);
+  }
+
+  async function runSearch(term) {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await hassRef.current.callService(
+        "media_player",
+        "search_media",
+        { search_query: term },
+        { entity_id: entityId },
+        true, true
+      );
+      const resp = r?.response;
+      let items = [];
+      if (resp?.[entityId]?.result)            items = resp[entityId].result;
+      else if (resp?.result)                   items = resp.result;
+      else if (Array.isArray(resp?.[entityId])) items = resp[entityId];
+      else if (Array.isArray(resp))            items = resp;
+      setStack([{ kind: "search", items, query: term, title: `Search: ${term}` }]);
+    } catch (e) {
+      setErr(e?.message || (typeof e === "string" ? e : JSON.stringify(e)));
+    }
+    setLoading(false);
+  }
+
+  async function enter(item) {
+    // Leaf playable (track / radio) → play
+    if (!item.can_expand) {
+      if (item.can_play && item.media_content_id) {
+        playMedia(item.media_content_id, item.media_content_type);
+      }
+      return;
+    }
+    // Expandable (artist / album / playlist / folder) → drill in
+    setLoading(true);
+    try {
+      const node = await hassRef.current.callWS({
+        type: "media_player/browse_media",
+        entity_id: entityId,
+        media_content_id: item.media_content_id,
+        media_content_type: item.media_content_type,
+      });
+      setStack([...stack, { kind: "browse", node, title: node.title || item.title }]);
       setErr(null);
     } catch (e) {
       setErr(e?.message || String(e));
     }
     setLoading(false);
-  };
-  const back = () => path.length > 0 && setPath(path.slice(0, -1));
-
-  if (loading && !current) {
-    return (
-      <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
-        Loading library…
-      </div>
-    );
   }
+
+  function back() {
+    if (stack.length > 1) setStack(stack.slice(0, -1));
+  }
+
+  // Detect if children are a track list (all leaves playable, no folders)
+  const isTrackList = (items) =>
+    items.length > 0 && items.every(it =>
+      (!it.can_expand && it.can_play) ||
+      it.media_class === "track" ||
+      it.media_class === "music"
+    );
+
+  const top = stack[stack.length - 1];
+
+  // ─── Search input — always rendered on Search tab ─────────────────────
+  const SearchBar = (
+    <div className="lib-search-bar">
+      <Icon name="search" size={14} />
+      <input
+        autoFocus
+        placeholder="Search artists, albums, tracks…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+    </div>
+  );
+
   if (err) {
     return (
-      <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
-        <div style={{ fontSize: 14, color: "#b6432e" }}>Couldn't load library</div>
-        <div style={{ fontSize: 12, marginTop: 8 }}>{err}</div>
+      <div className="lib-body">
+        {tab === "Search" && SearchBar}
+        <div className="lib-status">
+          <div style={{ color: "#b6432e", fontSize: 14 }}>Error</div>
+          <div style={{ marginTop: 6, fontSize: 12 }}>{err}</div>
+        </div>
+      </div>
+    );
+  }
+  if (loading && !top) {
+    return (
+      <div className="lib-body">
+        {tab === "Search" && SearchBar}
+        <div className="lib-status">Loading…</div>
+      </div>
+    );
+  }
+  if (!top) {
+    return (
+      <div className="lib-body">
+        {tab === "Search" && SearchBar}
+        <div className="lib-status" style={{ paddingTop: 40 }}>
+          {tab === "Search" ? (
+            <>
+              <Icon name="search" size={28} />
+              <div style={{ marginTop: 12, fontSize: 14 }}>
+                Search artists, albums, tracks, and stations.
+              </div>
+            </>
+          ) : "Nothing to show."}
+        </div>
       </div>
     );
   }
 
-  const items = current?.children || [];
-
   return (
-    <div className="lib-section">
+    <div className="lib-body">
+      {tab === "Search" && SearchBar}
+
       <div className="lib-section-head">
-        <h3>{path.length > 0 ? current?.title : "Your Library"}</h3>
-        {path.length > 0 && (
+        <h3>{top.title}</h3>
+        {stack.length > 1 && (
           <button className="see-all" onClick={back}>← Back</button>
         )}
       </div>
-      {items.length === 0 ? (
-        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)", fontSize: 13 }}>
-          Nothing here.
-        </div>
-      ) : (
-        <div className="album-row">
-          {items.slice(0, 50).map((item, i) => {
-            const hasArt = !!item.thumbnail;
-            return (
-              <div
-                key={(item.media_content_id || "") + i}
-                className="album"
-                onClick={() => enter(item)}
-                title={item.title}
-              >
-                <div
-                  className="album-art"
-                  style={hasArt
-                    ? { backgroundImage: `url('${item.thumbnail}')`, backgroundSize: "cover", backgroundPosition: "center" }
-                    : { background: "linear-gradient(160deg, #6a6fc4 0%, #2a2e7a 100%)" }
-                  }
-                >
-                  {!hasArt && <div className="label">{item.title}</div>}
-                </div>
-                <div className="album-title" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {item.title}
-                </div>
-                <div className="album-meta">
-                  {item.media_class || item.media_content_type || ""}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+
+      {loading && (
+        <div className="lib-status" style={{ padding: "16px 0" }}>Loading…</div>
       )}
+
+      {top.kind === "search"
+        ? <SearchResults items={top.items} onEnter={enter} />
+        : isTrackList(top.node?.children || [])
+          ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} />
+          : <ItemGrid items={top.node?.children || []} onEnter={enter} />
+      }
     </div>
   );
 }
 
-// Searches Music Assistant via the music_assistant/search WebSocket call.
-// Falls back to a generic media_player.search_media service if the MA WS
-// command isn't registered. Plays a tapped result on the primary player.
-function LibSearch({ entityId, hass, playMedia, initialQuery }) {
-  const [q, setQ]       = React.useState(initialQuery || "");
-  const [data, setData] = React.useState(null);
-  const [loading, setLoading] = React.useState(false);
-  const [err, setErr]   = React.useState(null);
+// Groups raw search results by class and renders sections
+function SearchResults({ items, onEnter }) {
+  const buckets = { artist: [], album: [], track: [], playlist: [], radio: [], other: [] };
+  for (const it of items) {
+    const cls = (it.media_class || it.media_content_type || "").toLowerCase();
+    const key = ["artist","album","track","playlist","radio"].find(k => cls.includes(k)) || "other";
+    buckets[key].push(it);
+  }
+  const sections = [
+    { title: "Artists",   items: buckets.artist,   tracks: false },
+    { title: "Albums",    items: buckets.album,    tracks: false },
+    { title: "Tracks",    items: buckets.track,    tracks: true  },
+    { title: "Playlists", items: buckets.playlist, tracks: false },
+    { title: "Radio",     items: buckets.radio,    tracks: false },
+    { title: "More",      items: buckets.other,    tracks: false },
+  ].filter(s => s.items.length > 0);
 
-  // Sync if the speakers-card search above pushes a new query in
-  React.useEffect(() => { if (initialQuery !== undefined) setQ(initialQuery); }, [initialQuery]);
-
-  // Debounced search via media_player.search_media (Music Assistant supports
-  // this — returns BrowseMedia-shaped results with thumbnails + content IDs).
-  React.useEffect(() => {
-    const term = q.trim();
-    if (!term || !hass || !entityId) { setData(null); setErr(null); return; }
-    setLoading(true);
-    setErr(null);
-    const id = setTimeout(async () => {
-      try {
-        const r = await hass.callService(
-          "media_player",
-          "search_media",
-          { search_query: term },
-          { entity_id: entityId },
-          true,   // notifyOnError
-          true    // returnResponse
-        );
-        // Possible shapes:
-        //   r.response[entity_id].result = [items]
-        //   r.response.result            = [items]
-        //   r.response[entity_id]        = [items]
-        //   r.response                   = [items]
-        const resp = r?.response;
-        let items = [];
-        if (resp?.[entityId]?.result)         items = resp[entityId].result;
-        else if (resp?.result)                items = resp.result;
-        else if (Array.isArray(resp?.[entityId])) items = resp[entityId];
-        else if (Array.isArray(resp))         items = resp;
-
-        // Group by media_class / media_content_type into sections
-        const buckets = { artist: [], album: [], track: [], playlist: [], radio: [], other: [] };
-        for (const it of items) {
-          const cls = (it.media_class || it.media_content_type || "").toLowerCase();
-          const key = ["artist","album","track","playlist","radio"].find(k => cls.includes(k)) || "other";
-          buckets[key].push(it);
-        }
-        setData(buckets);
-      } catch (e) {
-        setErr(e?.message || (typeof e === "string" ? e : JSON.stringify(e)));
-      }
-      setLoading(false);
-    }, 300);
-    return () => clearTimeout(id);
-  }, [q, hass, entityId]);
-
-  const sections = data ? [
-    { title: "Artists",   items: data.artist   || [] },
-    { title: "Albums",    items: data.album    || [] },
-    { title: "Tracks",    items: data.track    || [] },
-    { title: "Playlists", items: data.playlist || [] },
-    { title: "Radio",     items: data.radio    || [] },
-    { title: "More",      items: data.other    || [] },
-  ].filter(s => s.items.length > 0) : [];
-
+  if (sections.length === 0) {
+    return <div className="lib-status">No results.</div>;
+  }
   return (
-    <div>
-      <div
-        className="search"
-        style={{
-          margin: "16px 0 4px",
-          background: "var(--paper-2)",
-          border: "1px solid var(--hairline)",
-          padding: "9px 14px",
-        }}
-      >
-        <Icon name="search" size={14} />
-        <input
-          autoFocus
-          placeholder="Search artists, albums, tracks…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-      </div>
-
-      {err ? (
-        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
-          <div style={{ fontSize: 14, color: "#b6432e" }}>Search failed</div>
-          <div style={{ fontSize: 12, marginTop: 8 }}>{err}</div>
-          <div style={{ fontSize: 11, marginTop: 8, opacity: .7 }}>
-            (Uses media_player.search_media — supported by Music Assistant 2.x and HA 2024.4+)
-          </div>
-        </div>
-      ) : loading ? (
-        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
-          Searching…
-        </div>
-      ) : !data && q.trim() ? (
-        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
-          Type to search
-        </div>
-      ) : !data ? (
-        <div style={{ padding: "60px 0", textAlign: "center", color: "var(--ink-3)" }}>
-          <Icon name="search" size={28} />
-          <div style={{ marginTop: 12, fontSize: 14 }}>
-            Search artists, albums, tracks, and stations across your library.
-          </div>
-        </div>
-      ) : sections.length === 0 ? (
-        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
-          No results for “{q}”.
-        </div>
-      ) : sections.map(sec => (
+    <>
+      {sections.map(sec => (
         <div className="lib-section" key={sec.title}>
           <div className="lib-section-head">
-            <h3>{sec.title}</h3>
+            <h3 style={{ fontSize: 14 }}>{sec.title}</h3>
           </div>
-          <div className="album-row">
-            {sec.items.slice(0, 10).map((item, i) => {
-              const title = item.title || item.name;
-              const art   = item.thumbnail || item.image || item.metadata?.images?.[0]?.path;
-              const id    = item.media_content_id || item.uri || item.item_id;
-              const type  = item.media_content_type || item.media_type;
-              return (
-                <div
-                  key={(id || title) + i}
-                  className="album"
-                  onClick={() => id && playMedia(id, type)}
-                  title={title}
-                >
-                  <div
-                    className="album-art"
-                    style={art
-                      ? { backgroundImage: `url('${art}')`, backgroundSize: "cover", backgroundPosition: "center" }
-                      : { background: "linear-gradient(160deg, #6a6fc4 0%, #2a2e7a 100%)" }
-                    }
-                  >
-                    {!art && <div className="label">{title}</div>}
-                  </div>
-                  <div className="album-title" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {title}
-                  </div>
-                  <div className="album-meta">{type || ""}</div>
-                </div>
-              );
-            })}
-          </div>
+          {sec.tracks
+            ? <TrackList items={sec.items.slice(0, 8)} onEnter={onEnter} />
+            : <ItemGrid items={sec.items.slice(0, 10)} onEnter={onEnter} />
+          }
         </div>
       ))}
+    </>
+  );
+}
+
+function ItemGrid({ items, onEnter }) {
+  if (!items?.length) {
+    return <div className="lib-status">Nothing here.</div>;
+  }
+  return (
+    <div className="album-row">
+      {items.slice(0, 30).map((item, i) => {
+        const title = item.title || item.name;
+        const art   = item.thumbnail || item.image;
+        const type  = item.media_class || item.media_content_type || "";
+        return (
+          <div
+            key={(item.media_content_id || title) + i}
+            className="album"
+            onClick={() => onEnter(item)}
+            title={title}
+          >
+            <div
+              className="album-art"
+              style={art
+                ? { backgroundImage: `url('${art}')`, backgroundSize: "cover", backgroundPosition: "center" }
+                : { background: "linear-gradient(160deg, #6a6fc4 0%, #2a2e7a 100%)" }
+              }
+            >
+              {!art && <div className="label">{title}</div>}
+            </div>
+            <div className="album-title">{title}</div>
+            <div className="album-meta">{type}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TrackList({ items, parent, onEnter }) {
+  if (!items?.length) return <div className="lib-status">No tracks.</div>;
+  return (
+    <div className="track-list">
+      {items.map((it, i) => {
+        const title = it.title || it.name;
+        const art   = it.thumbnail || it.image || parent?.thumbnail;
+        const meta  = it.media_class || it.media_content_type || "";
+        return (
+          <button
+            key={(it.media_content_id || title) + i}
+            className="track-row"
+            onClick={() => onEnter(it)}
+            title={title}
+          >
+            <div className="num">{i + 1}</div>
+            <div
+              className="thumb"
+              style={art
+                ? { backgroundImage: `url('${art}')`, backgroundSize: "cover", backgroundPosition: "center" }
+                : { background: "linear-gradient(160deg, #6a6fc4, #2a2e7a)" }
+              }
+            />
+            <div className="info">
+              <div className="title">{title}</div>
+              <div className="meta">{meta}</div>
+            </div>
+            <Icon name="play" size={14} />
+          </button>
+        );
+      })}
     </div>
   );
 }

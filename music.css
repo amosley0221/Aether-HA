@@ -126,12 +126,18 @@
 /* Main music body */
 .music-grid {
   display: grid;
-  grid-template-columns: minmax(520px, 1.05fr) 1.2fr;
+  /* minmax(0,…) lets columns shrink below intrinsic content size so the
+     library can't push the layout horizontally when results pile up. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 18px;
+  align-items: start;
 }
 @media (max-width: 1180px) {
-  .music-grid { grid-template-columns: 1fr; }
+  .music-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Both cards need min-width:0 to participate in the grid shrinkage above. */
+.np-card, .lib-card { min-width: 0; }
 
 /* Now Playing */
 .np-card {
@@ -243,6 +249,46 @@
   padding: 20px 22px 22px;
   box-shadow: var(--shadow-card);
   border: 1px solid var(--hairline-2);
+  display: flex;
+  flex-direction: column;
+  /* Pin the library to a maximum height so it scrolls internally instead
+     of stretching the page when results pile up. */
+  max-height: calc(100vh - 240px);
+  min-height: 400px;
+  overflow: hidden;
+}
+.lib-body {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0 -22px -22px; /* negative padding so scrollbar hugs the edge */
+  padding: 0 22px 22px;
+}
+.lib-body::-webkit-scrollbar { width: 6px; }
+.lib-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 99px; }
+
+.lib-search-bar {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--paper-2);
+  border: 1px solid var(--hairline);
+  padding: 9px 14px;
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 13px;
+  margin: 16px 0 8px;
+}
+.lib-search-bar input {
+  background: none; border: 0; outline: 0;
+  flex: 1; min-width: 0;
+  color: var(--ink);
+  font: inherit;
+}
+.lib-search-bar input::placeholder { color: var(--ink-3); }
+
+.lib-status {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
 }
 .lib-top { display: flex; align-items: baseline; justify-content: space-between; }
 .lib-tabs { display: flex; gap: 20px; }
@@ -282,6 +328,7 @@
   display: flex; flex-direction: column; gap: 8px;
   cursor: pointer;
   transition: transform .15s;
+  min-width: 0;
 }
 .album:hover { transform: translateY(-2px); }
 .album-art {
@@ -299,5 +346,55 @@
   text-shadow: 0 2px 8px rgba(0,0,0,.4);
   line-height: 1.15;
 }
-.album-title { font-size: 13px; font-weight: 500; letter-spacing: -.005em; }
-.album-meta  { font-size: 11px; color: var(--ink-3); margin-top: -2px; }
+.album-title {
+  font-size: 13px; font-weight: 500; letter-spacing: -.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.album-meta  {
+  font-size: 11px; color: var(--ink-3); margin-top: -2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-transform: capitalize;
+}
+
+/* Track list (rendered when browsing inside an album/playlist, or for the
+   Tracks section of search results). Plain rows instead of a 5-col grid. */
+.track-list {
+  display: flex; flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.track-row {
+  display: grid;
+  grid-template-columns: 28px 40px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: background .15s;
+}
+.track-row:hover { background: var(--paper-2); }
+.track-row .num {
+  font-size: 12px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.track-row .thumb {
+  width: 40px; height: 40px; border-radius: 6px;
+  background-size: cover; background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);
+}
+.track-row .info { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.track-row .info .title {
+  font-size: 13px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.track-row .info .meta {
+  font-size: 11px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-transform: capitalize;
+}
+.track-row svg { color: var(--ink-3); }
+.track-row:hover svg { color: var(--ink); }
