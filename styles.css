@@ -38,6 +38,21 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+aether-panel {
+  display: block;
+  min-height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+  font-feature-settings: "ss01","cv11","ss03";
+  background:
+    radial-gradient(900px 700px at 0% 0%, #cfe0f2 0%, rgba(207,224,242,.55) 22%, rgba(207,224,242,.18) 45%, transparent 70%),
+    #ffffff;
+  color: var(--ink);
+  letter-spacing: -.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+aether-panel #aether-mount { min-height: 100%; }
+
 button { font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; padding: 0; }
 input { font: inherit; color: inherit; }
 
