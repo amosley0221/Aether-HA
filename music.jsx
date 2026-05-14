@@ -535,34 +535,58 @@ function LibSearch({ entityId, hass, playMedia, initialQuery }) {
   // Sync if the speakers-card search above pushes a new query in
   React.useEffect(() => { if (initialQuery !== undefined) setQ(initialQuery); }, [initialQuery]);
 
-  // Debounced search
+  // Debounced search via media_player.search_media (Music Assistant supports
+  // this — returns BrowseMedia-shaped results with thumbnails + content IDs).
   React.useEffect(() => {
     const term = q.trim();
-    if (!term || !hass) { setData(null); setErr(null); return; }
+    if (!term || !hass || !entityId) { setData(null); setErr(null); return; }
     setLoading(true);
     setErr(null);
     const id = setTimeout(async () => {
       try {
-        const result = await hass.callWS({
-          type: "music_assistant/search",
-          search_query: term,
-          limit: 20,
-        });
-        setData(result);
+        const r = await hass.callService(
+          "media_player",
+          "search_media",
+          { search_query: term },
+          { entity_id: entityId },
+          true,   // notifyOnError
+          true    // returnResponse
+        );
+        // Possible shapes:
+        //   r.response[entity_id].result = [items]
+        //   r.response.result            = [items]
+        //   r.response[entity_id]        = [items]
+        //   r.response                   = [items]
+        const resp = r?.response;
+        let items = [];
+        if (resp?.[entityId]?.result)         items = resp[entityId].result;
+        else if (resp?.result)                items = resp.result;
+        else if (Array.isArray(resp?.[entityId])) items = resp[entityId];
+        else if (Array.isArray(resp))         items = resp;
+
+        // Group by media_class / media_content_type into sections
+        const buckets = { artist: [], album: [], track: [], playlist: [], radio: [], other: [] };
+        for (const it of items) {
+          const cls = (it.media_class || it.media_content_type || "").toLowerCase();
+          const key = ["artist","album","track","playlist","radio"].find(k => cls.includes(k)) || "other";
+          buckets[key].push(it);
+        }
+        setData(buckets);
       } catch (e) {
-        setErr(e?.message || String(e));
+        setErr(e?.message || (typeof e === "string" ? e : JSON.stringify(e)));
       }
       setLoading(false);
     }, 300);
     return () => clearTimeout(id);
-  }, [q, hass]);
+  }, [q, hass, entityId]);
 
   const sections = data ? [
-    { title: "Artists",   items: data.artists   || [], type: "artist"   },
-    { title: "Albums",    items: data.albums    || [], type: "album"    },
-    { title: "Tracks",    items: data.tracks    || [], type: "track"    },
-    { title: "Playlists", items: data.playlists || [], type: "playlist" },
-    { title: "Radio",     items: data.radio     || [], type: "radio"    },
+    { title: "Artists",   items: data.artist   || [] },
+    { title: "Albums",    items: data.album    || [] },
+    { title: "Tracks",    items: data.track    || [] },
+    { title: "Playlists", items: data.playlist || [] },
+    { title: "Radio",     items: data.radio    || [] },
+    { title: "More",      items: data.other    || [] },
   ].filter(s => s.items.length > 0) : [];
 
   return (
@@ -590,7 +614,7 @@ function LibSearch({ entityId, hass, playMedia, initialQuery }) {
           <div style={{ fontSize: 14, color: "#b6432e" }}>Search failed</div>
           <div style={{ fontSize: 12, marginTop: 8 }}>{err}</div>
           <div style={{ fontSize: 11, marginTop: 8, opacity: .7 }}>
-            (Music Assistant search needs the music_assistant integration's WebSocket API)
+            (Uses media_player.search_media — supported by Music Assistant 2.x and HA 2024.4+)
           </div>
         </div>
       ) : loading ? (
@@ -619,15 +643,16 @@ function LibSearch({ entityId, hass, playMedia, initialQuery }) {
           </div>
           <div className="album-row">
             {sec.items.slice(0, 10).map((item, i) => {
-              const art = item.image || item.thumbnail || item.metadata?.images?.[0]?.path;
-              const id  = item.uri || item.media_content_id || item.item_id;
-              const type = item.media_type || item.media_content_type || sec.type;
+              const title = item.title || item.name;
+              const art   = item.thumbnail || item.image || item.metadata?.images?.[0]?.path;
+              const id    = item.media_content_id || item.uri || item.item_id;
+              const type  = item.media_content_type || item.media_type;
               return (
                 <div
-                  key={(id || item.name) + i}
+                  key={(id || title) + i}
                   className="album"
-                  onClick={() => playMedia(id, type)}
-                  title={item.name || item.title}
+                  onClick={() => id && playMedia(id, type)}
+                  title={title}
                 >
                   <div
                     className="album-art"
@@ -636,14 +661,12 @@ function LibSearch({ entityId, hass, playMedia, initialQuery }) {
                       : { background: "linear-gradient(160deg, #6a6fc4 0%, #2a2e7a 100%)" }
                     }
                   >
-                    {!art && <div className="label">{item.name || item.title}</div>}
+                    {!art && <div className="label">{title}</div>}
                   </div>
                   <div className="album-title" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {item.name || item.title}
+                    {title}
                   </div>
-                  <div className="album-meta">
-                    {item.artists?.map(a => a.name).join(", ") || item.artist || ""}
-                  </div>
+                  <div className="album-meta">{type || ""}</div>
                 </div>
               );
             })}
