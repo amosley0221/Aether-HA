@@ -118,4 +118,38 @@ const MiniRoomRow = ({ room }) => (
   </div>
 );
 
-Object.assign(window, { ROOMS_INITIAL, ALBUMS, Icon, Bars, SoundBars, Avatar, MiniRoomRow, fmt });
+// ─── Home Assistant integration ─────────────────────────────────────────────
+const HassContext = React.createContext(null);
+
+function HassProvider({ children }) {
+  const [hass, setHass] = React.useState(() => window.__aetherHass || null);
+  React.useEffect(() => {
+    const onHass = (e) => setHass(e.detail);
+    window.addEventListener("aether-hass-update", onHass);
+    if (window.__aetherHass) setHass(window.__aetherHass);
+    return () => window.removeEventListener("aether-hass-update", onHass);
+  }, []);
+  return React.createElement(HassContext.Provider, { value: hass }, children);
+}
+
+const useHass = () => React.useContext(HassContext);
+
+const useEntity = (entityId) => {
+  const hass = useHass();
+  if (!hass || !entityId) return null;
+  return hass.states[entityId] || null;
+};
+
+const callService = async (hass, svc, data = {}) => {
+  if (!hass) return;
+  const [domain, service] = svc.split(".");
+  return hass.callService(domain, service, data);
+};
+
+const entityName = (st, fallback) =>
+  st?.attributes?.friendly_name || fallback || st?.entity_id || "";
+
+Object.assign(window, {
+  ROOMS_INITIAL, ALBUMS, Icon, Bars, SoundBars, Avatar, MiniRoomRow, fmt,
+  HassContext, HassProvider, useHass, useEntity, callService, entityName,
+});

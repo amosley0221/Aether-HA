@@ -130,4 +130,14 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+const __aetherMount = window.__aetherMount || document.getElementById("root");
+if (__aetherMount) {
+  if (!window.__aetherReactRoot) {
+    window.__aetherReactRoot = ReactDOM.createRoot(__aetherMount);
+  }
+  window.__aetherReactRoot.render(
+    <HassProvider>
+      <App />
+    </HassProvider>
+  );
+}
