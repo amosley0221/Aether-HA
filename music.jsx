@@ -17,7 +17,7 @@ function MusicPage() {
 
   // ─── Live room data derived from hass.states ─────────────────────────────
   const liveRooms = React.useMemo(() => {
-    return cfg.rooms.map(room => {
+    const mapped = cfg.rooms.map(room => {
       const p = hass?.states?.[room.mediaPlayer];
       const groupMembers = p?.attributes?.group_members || [];
       return {
@@ -26,6 +26,7 @@ function MusicPage() {
         entityId: room.mediaPlayer,
         state: p?.state || "unavailable",
         playing: p?.state === "playing",
+        paused:  p?.state === "paused",
         track:   p?.attributes?.media_title || "",
         artist:  p?.attributes?.media_artist || "",
         album:   p?.attributes?.media_album_name || "",
@@ -36,6 +37,9 @@ function MusicPage() {
         groupSize: groupMembers.length,
       };
     });
+    // Stable sort: playing first, then paused, then everything else.
+    const score = (r) => r.playing ? 0 : r.paused ? 1 : 2;
+    return mapped.sort((a, b) => score(a) - score(b));
   }, [hass, cfg.rooms]);
 
   // Auto-pick primary: if the user hasn't selected a room manually, prefer the
@@ -167,7 +171,10 @@ function MusicPage() {
             <input
               placeholder="Search your library"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                if (e.target.value.trim() && tab !== "Search") setTab("Search");
+              }}
             />
           </div>
           <button className="btn-pill" title="Up next"><Icon name="up" /> Up Next</button>
@@ -350,18 +357,20 @@ function MusicPage() {
           </div>
 
           {tab === "Search" ? (
-            <div style={{ padding: "60px 0", textAlign: "center", color: "var(--ink-3)" }}>
-              <Icon name="search" size={28} />
-              <div style={{ marginTop: 12, fontSize: 14 }}>
-                Search across your library, Apple Music, and stations.
-              </div>
-            </div>
-          ) : (
-            <LibBrowse
-              key={primary?.entityId}
+            <LibSearch
+              key={"search-" + primary?.entityId}
               entityId={primary?.entityId}
               hass={hass}
               playMedia={playMedia}
+              initialQuery={search}
+            />
+          ) : (
+            <LibBrowse
+              key={tab + "-" + primary?.entityId}
+              entityId={primary?.entityId}
+              hass={hass}
+              playMedia={playMedia}
+              autoDrill={LIB_TAB_TARGETS[tab]}
             />
           )}
         </div>
@@ -370,9 +379,20 @@ function MusicPage() {
   );
 }
 
-// Browses media via the media_player/browse_media WebSocket call. Navigates
-// into folders, plays leaf items, keeps a back-stack for breadcrumbs.
-function LibBrowse({ entityId, hass, playMedia }) {
+// Per-tab default location inside the browse_media tree. Aether drills into
+// the matching root child (case-insensitive title) before showing items so
+// each tab lands somewhere useful instead of the generic provider list.
+const LIB_TAB_TARGETS = {
+  "Listen Now": ["Favorites", "Music Assistant", "Recently Played"],
+  "Browse":     null, // root
+  "Radio":      ["Radio Browser", "Radio stations", "Radio"],
+  "Library":    ["Music Library", "Library", "Music Assistant"],
+};
+
+// Browses media via the media_player/browse_media WebSocket call. When
+// autoDrill is provided it drills one level into the first matching child
+// title (or chain of titles) and treats that as the effective root.
+function LibBrowse({ entityId, hass, playMedia, autoDrill }) {
   const [path, setPath]       = React.useState([]);
   const [root, setRoot]       = React.useState(null);
   const [err, setErr]         = React.useState(null);
@@ -382,18 +402,36 @@ function LibBrowse({ entityId, hass, playMedia }) {
     if (!entityId || !hass) return;
     setLoading(true);
     setErr(null);
-    hass.callWS({
-      type: "media_player/browse_media",
-      entity_id: entityId,
-    }).then(r => {
-      setRoot(r);
-      setPath([]);
+    (async () => {
+      try {
+        let node = await hass.callWS({
+          type: "media_player/browse_media",
+          entity_id: entityId,
+        });
+        if (autoDrill && Array.isArray(autoDrill)) {
+          for (const wantedTitle of autoDrill) {
+            const child = (node.children || []).find(
+              (c) => c.title?.toLowerCase() === wantedTitle.toLowerCase()
+            );
+            if (child && child.can_expand) {
+              node = await hass.callWS({
+                type: "media_player/browse_media",
+                entity_id: entityId,
+                media_content_id: child.media_content_id,
+                media_content_type: child.media_content_type,
+              });
+              break;
+            }
+          }
+        }
+        setRoot(node);
+        setPath([]);
+      } catch (e) {
+        setErr(e?.message || String(e));
+      }
       setLoading(false);
-    }).catch(e => {
-      setErr(e?.message || String(e));
-      setLoading(false);
-    });
-  }, [entityId, hass]);
+    })();
+  }, [entityId, hass, JSON.stringify(autoDrill)]);
 
   const current = path.length ? path[path.length - 1] : root;
 
@@ -481,6 +519,137 @@ function LibBrowse({ entityId, hass, playMedia }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Searches Music Assistant via the music_assistant/search WebSocket call.
+// Falls back to a generic media_player.search_media service if the MA WS
+// command isn't registered. Plays a tapped result on the primary player.
+function LibSearch({ entityId, hass, playMedia, initialQuery }) {
+  const [q, setQ]       = React.useState(initialQuery || "");
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr]   = React.useState(null);
+
+  // Sync if the speakers-card search above pushes a new query in
+  React.useEffect(() => { if (initialQuery !== undefined) setQ(initialQuery); }, [initialQuery]);
+
+  // Debounced search
+  React.useEffect(() => {
+    const term = q.trim();
+    if (!term || !hass) { setData(null); setErr(null); return; }
+    setLoading(true);
+    setErr(null);
+    const id = setTimeout(async () => {
+      try {
+        const result = await hass.callWS({
+          type: "music_assistant/search",
+          search_query: term,
+          limit: 20,
+        });
+        setData(result);
+      } catch (e) {
+        setErr(e?.message || String(e));
+      }
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [q, hass]);
+
+  const sections = data ? [
+    { title: "Artists",   items: data.artists   || [], type: "artist"   },
+    { title: "Albums",    items: data.albums    || [], type: "album"    },
+    { title: "Tracks",    items: data.tracks    || [], type: "track"    },
+    { title: "Playlists", items: data.playlists || [], type: "playlist" },
+    { title: "Radio",     items: data.radio     || [], type: "radio"    },
+  ].filter(s => s.items.length > 0) : [];
+
+  return (
+    <div>
+      <div
+        className="search"
+        style={{
+          margin: "16px 0 4px",
+          background: "var(--paper-2)",
+          border: "1px solid var(--hairline)",
+          padding: "9px 14px",
+        }}
+      >
+        <Icon name="search" size={14} />
+        <input
+          autoFocus
+          placeholder="Search artists, albums, tracks…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+
+      {err ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
+          <div style={{ fontSize: 14, color: "#b6432e" }}>Search failed</div>
+          <div style={{ fontSize: 12, marginTop: 8 }}>{err}</div>
+          <div style={{ fontSize: 11, marginTop: 8, opacity: .7 }}>
+            (Music Assistant search needs the music_assistant integration's WebSocket API)
+          </div>
+        </div>
+      ) : loading ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
+          Searching…
+        </div>
+      ) : !data && q.trim() ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
+          Type to search
+        </div>
+      ) : !data ? (
+        <div style={{ padding: "60px 0", textAlign: "center", color: "var(--ink-3)" }}>
+          <Icon name="search" size={28} />
+          <div style={{ marginTop: 12, fontSize: 14 }}>
+            Search artists, albums, tracks, and stations across your library.
+          </div>
+        </div>
+      ) : sections.length === 0 ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: "var(--ink-3)" }}>
+          No results for “{q}”.
+        </div>
+      ) : sections.map(sec => (
+        <div className="lib-section" key={sec.title}>
+          <div className="lib-section-head">
+            <h3>{sec.title}</h3>
+          </div>
+          <div className="album-row">
+            {sec.items.slice(0, 10).map((item, i) => {
+              const art = item.image || item.thumbnail || item.metadata?.images?.[0]?.path;
+              const id  = item.uri || item.media_content_id || item.item_id;
+              const type = item.media_type || item.media_content_type || sec.type;
+              return (
+                <div
+                  key={(id || item.name) + i}
+                  className="album"
+                  onClick={() => playMedia(id, type)}
+                  title={item.name || item.title}
+                >
+                  <div
+                    className="album-art"
+                    style={art
+                      ? { backgroundImage: `url('${art}')`, backgroundSize: "cover", backgroundPosition: "center" }
+                      : { background: "linear-gradient(160deg, #6a6fc4 0%, #2a2e7a 100%)" }
+                    }
+                  >
+                    {!art && <div className="label">{item.name || item.title}</div>}
+                  </div>
+                  <div className="album-title" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.name || item.title}
+                  </div>
+                  <div className="album-meta">
+                    {item.artists?.map(a => a.name).join(", ") || item.artist || ""}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
