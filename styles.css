@@ -1,5 +1,7 @@
 /* Aether — design tokens & global styles */
-:root {
+:root,
+aether-panel,
+:host {
   --bg:            #ffffff;
   --bg-deep:       #f4f6fa;
   --paper:         #ffffff;
