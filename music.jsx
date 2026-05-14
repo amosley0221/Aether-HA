@@ -16,30 +16,40 @@ function MusicPage() {
   const [search, setSearch]   = React.useState("");
 
   // ─── Live room data derived from hass.states ─────────────────────────────
+  // Two entities per room: mediaPlayer is the Music Assistant wrapper used
+  // for control (search, play, transport, volume — Sonos doesn't support
+  // search_media). displayPlayer is the Sonos integration entity used as a
+  // fallback display when something is playing outside Aether. The rail
+  // reads whichever entity is most active.
   const liveRooms = React.useMemo(() => {
+    const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
     const mapped = cfg.rooms.map(room => {
-      const p = hass?.states?.[room.mediaPlayer];
-      const groupMembers = p?.attributes?.group_members || [];
+      const ctrl    = hass?.states?.[room.mediaPlayer];
+      const display = room.displayPlayer ? hass?.states?.[room.displayPlayer] : null;
+      const active  = [ctrl, display].filter(Boolean).sort(
+        (a, b) => score(a.state) - score(b.state)
+      )[0] || ctrl || display;
+      const a = active?.attributes || {};
+      const groupMembers = a.group_members || ctrl?.attributes?.group_members || [];
       return {
         ...room,
-        entity: p,
+        entity:   active,        // display attrs come from here
+        ctrl,                    // services target this entity_id
         entityId: room.mediaPlayer,
-        state: p?.state || "unavailable",
-        playing: p?.state === "playing",
-        paused:  p?.state === "paused",
-        track:   p?.attributes?.media_title || "",
-        artist:  p?.attributes?.media_artist || "",
-        album:   p?.attributes?.media_album_name || "",
-        art:     p?.attributes?.entity_picture || null,
-        volume:  Math.round((p?.attributes?.volume_level ?? 0) * 100),
-        muted:   !!p?.attributes?.is_volume_muted,
+        state:    active?.state || "unavailable",
+        playing:  active?.state === "playing",
+        paused:   active?.state === "paused",
+        track:    a.media_title || "",
+        artist:   a.media_artist || "",
+        album:    a.media_album_name || "",
+        art:      a.entity_picture || null,
+        volume:   Math.round(((ctrl?.attributes?.volume_level ?? a.volume_level) ?? 0) * 100),
+        muted:    !!(ctrl?.attributes?.is_volume_muted ?? a.is_volume_muted),
         groupMembers,
         groupSize: groupMembers.length,
       };
     });
-    // Stable sort: playing first, then paused, then everything else.
-    const score = (r) => r.playing ? 0 : r.paused ? 1 : 2;
-    return mapped.sort((a, b) => score(a) - score(b));
+    return mapped.sort((a, b) => score(a.state) - score(b.state));
   }, [hass, cfg.rooms]);
 
   // Auto-pick primary: if the user hasn't selected a room manually, prefer the
