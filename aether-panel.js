@@ -20,7 +20,14 @@
       if (this._booted) return;
       this._booted = true;
 
-      this.style.cssText = "display:block;height:100%;overflow:auto;";
+      this.style.cssText = [
+        "display:block",
+        "height:100%",
+        "overflow:auto",
+        "color:#14181f",
+        "font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Inter',system-ui,sans-serif",
+        "background:radial-gradient(900px 700px at 0% 0%, #cfe0f2 0%, rgba(207,224,242,.55) 22%, rgba(207,224,242,.18) 45%, transparent 70%), #ffffff",
+      ].join(";") + ";";
 
       for (const css of ["styles.css", "home.css", "music.css", "dashboard.css"]) {
         const link = document.createElement("link");
