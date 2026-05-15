@@ -796,28 +796,44 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
   }
 
   async function enter(item) {
-    // Leaf playable (track / radio) → play
-    if (!item.can_expand) {
-      if (item.can_play && item.media_content_id) {
-        playMedia(item.media_content_id, item.media_content_type);
+    if (!item) return;
+    // Drill in if the item looks like a folder/container. Some integrations
+    // omit can_expand on search results, so we also treat known container
+    // media_class / media_content_type values (artist/album/playlist/etc.)
+    // as expandable. If drilling fails AND the item is also playable, we
+    // fall back to playing it so a tap never silently does nothing.
+    const cls = (item.media_class || item.media_content_type || "").toLowerCase();
+    const looksLikeFolder =
+      item.can_expand === true ||
+      (item.can_expand !== false && /artist|album|playlist|directory|folder|library|station|podcast|audiobook/.test(cls));
+
+    if (looksLikeFolder) {
+      setLoading(true);
+      try {
+        const node = await hassRef.current.callWS({
+          type: "media_player/browse_media",
+          entity_id: entityId,
+          media_content_id: item.media_content_id,
+          media_content_type: item.media_content_type,
+        });
+        setStack([...stack, { kind: "browse", node, title: node.title || item.title }]);
+        setErr(null);
+        setLoading(false);
+        return;
+      } catch (e) {
+        // Drill failed — fall through to play if possible
+        if (!item.can_play) {
+          setErr(e?.message || String(e));
+          setLoading(false);
+          return;
+        }
+        setLoading(false);
       }
-      return;
     }
-    // Expandable (artist / album / playlist / folder) → drill in
-    setLoading(true);
-    try {
-      const node = await hassRef.current.callWS({
-        type: "media_player/browse_media",
-        entity_id: entityId,
-        media_content_id: item.media_content_id,
-        media_content_type: item.media_content_type,
-      });
-      setStack([...stack, { kind: "browse", node, title: node.title || item.title }]);
-      setErr(null);
-    } catch (e) {
-      setErr(e?.message || String(e));
+
+    if (item.can_play !== false && item.media_content_id) {
+      playMedia(item.media_content_id, item.media_content_type);
     }
-    setLoading(false);
   }
 
   function back() {
@@ -969,8 +985,12 @@ function ItemGrid({ items, onEnter, isPinned, togglePin }) {
         const type   = item.media_class || item.media_content_type || "";
         const id     = item.media_content_id;
         const pinned = isPinned && id ? isPinned(id) : false;
+        // <button> instead of <div> for reliable touch-click handling
+        // (Fully Kiosk's WebView and some mobile browsers drop onClick on
+        // non-button non-anchor elements).
         return (
-          <div
+          <button
+            type="button"
             key={(id || title) + i}
             className="album"
             onClick={() => onEnter(item)}
@@ -985,7 +1005,9 @@ function ItemGrid({ items, onEnter, isPinned, togglePin }) {
             >
               {!art && <div className="label">{title}</div>}
               {togglePin && id && (
-                <button
+                <span
+                  role="button"
+                  tabIndex={0}
                   className={"album-pin" + (pinned ? " pinned" : "")}
                   onClick={(e) => { e.stopPropagation(); togglePin(item); }}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -993,12 +1015,12 @@ function ItemGrid({ items, onEnter, isPinned, togglePin }) {
                   aria-label={pinned ? "Unpin" : "Pin"}
                 >
                   <Icon name={pinned ? "bookmarkFilled" : "bookmark"} size={13} />
-                </button>
+                </span>
               )}
             </div>
             <div className="album-title">{title}</div>
             <div className="album-meta">{type}</div>
-          </div>
+          </button>
         );
       })}
     </div>

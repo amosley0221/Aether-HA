@@ -331,8 +331,18 @@
   cursor: pointer;
   transition: transform .15s;
   min-width: 0;
+  /* Reset button-element defaults so it lays out like the old div */
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
 }
 .album:hover { transform: translateY(-2px); }
+.album:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 12px; }
 .album-art {
   aspect-ratio: 1; border-radius: 10px;
   position: relative; overflow: hidden;
