@@ -115,6 +115,16 @@ const AETHER_CONFIG = {
       mediaPlayer: "media_player.kitchen_display",
       camera: "camera.kitchen",
     },
+    {
+      id: "pixel",
+      name: "Pixel Tablet",
+      color: ["#5a7a96", "#2a4a60"],
+      // Google Cast player on the Pixel Tablet (Hub Mode). No MA wrapper
+      // yet; if you add the tablet to Music Assistant's player list later,
+      // a media_player.pixel_tablet_2 will appear and auto-resolve takes
+      // over to route Apple Music search/play through MA.
+      mediaPlayer: "media_player.pixel_tablet",
+    },
   ],
 
   cameras: [
