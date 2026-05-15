@@ -703,14 +703,16 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
     if (externalQuery !== undefined) setQuery(externalQuery);
   }, [externalQuery]);
 
-  // Initial load on tab/entity change. Intentionally does NOT depend on hass
-  // to avoid refetching on every state tick.
+  // Initial load on tab/entity change. Listen Now seeds a "pins" entry on
+  // the stack so drilling into a pin pushes onto it (and back pops back
+  // to the pin grid) — putting pins on the stack keeps the navigation
+  // model the same as search and browse.
   React.useEffect(() => {
     if (!entityId || !hassRef.current) return;
     setErr(null);
     setStack([]);
     if (tab === "Listen Now") {
-      // Rendered from pins directly (live), not from the stack — leave empty.
+      // Stack initialization deferred to the pins-loaded effect below
       return;
     }
     if (tab === "Search") {
@@ -719,6 +721,15 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
       runBrowse();
     }
   }, [tab, entityId]);
+
+  // When pins finish loading (or tab switches to Listen Now after they're
+  // already loaded), seed the stack with the pin view if it's empty.
+  React.useEffect(() => {
+    if (tab !== "Listen Now" || !pinsLoaded) return;
+    if (stack.length === 0) {
+      setStack([{ kind: "pins", title: "Listen Now" }]);
+    }
+  }, [tab, pinsLoaded]);
 
   // Debounced search re-run when query changes (Search tab only).
   React.useEffect(() => {
@@ -850,38 +861,45 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
 
   const top = stack[stack.length - 1];
 
-  // Listen Now → render pinned albums directly (not via the browse stack)
-  if (tab === "Listen Now") {
-    if (!pinsLoaded) {
-      return <div className="lib-body"><div className="lib-status">Loading…</div></div>;
+  // Plays a track from a tracklist with the rest of the list queued
+  // after it, so clicking song 5 of an album plays songs 5→end of THAT
+  // album rather than jumping to artist-radio. Prefers MA's batch play
+  // (it accepts an array of URIs), falls back to standard play_media +
+  // enqueue=add for the remainder.
+  const playTrackInList = async (clickedIndex, allTracks) => {
+    if (!entityId || !allTracks?.length) return;
+    const slice = allTracks.slice(clickedIndex);
+    const ids = slice.map((t) => t.media_content_id).filter(Boolean);
+    if (!ids.length) return;
+    // Try MA's batch service first
+    try {
+      await hassRef.current.callService("music_assistant", "play_media", {
+        entity_id: entityId,
+        media_id:  ids,
+        enqueue:   "replace",
+        radio_mode: false,
+      });
+      return;
+    } catch (_) { /* fall back */ }
+    // Standard: play the first track, then queue the rest
+    try {
+      await hassRef.current.callService("media_player", "play_media", {
+        entity_id:          entityId,
+        media_content_id:   ids[0],
+        media_content_type: slice[0].media_content_type,
+      });
+      for (let i = 1; i < ids.length; i++) {
+        await hassRef.current.callService("media_player", "play_media", {
+          entity_id:          entityId,
+          media_content_id:   ids[i],
+          media_content_type: slice[i].media_content_type,
+          enqueue:            "add",
+        });
+      }
+    } catch (e) {
+      console.warn("[aether] track-in-list playback failed:", e);
     }
-    return (
-      <div className="lib-body">
-        <div className="lib-section-head">
-          <h3>Listen Now</h3>
-          {pins.length > 0 && (
-            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-              {pins.length} pinned · tap bookmark to remove
-            </span>
-          )}
-        </div>
-        {pins.length === 0 ? (
-          <div className="lib-status" style={{ paddingTop: 40 }}>
-            <Icon name="bookmark" size={28} />
-            <div style={{ marginTop: 12, fontSize: 14, color: "var(--ink-2)" }}>
-              No pinned albums yet
-            </div>
-            <div style={{ marginTop: 6, fontSize: 12 }}>
-              In Library, Browse, or Search, tap the bookmark icon on any
-              album, playlist, or artist to pin it here.
-            </div>
-          </div>
-        ) : (
-          <ItemGrid items={pins} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
-        )}
-      </div>
-    );
-  }
+  };
 
   if (err) {
     return (
@@ -926,10 +944,25 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
         <div className="lib-status" style={{ padding: "16px 0" }}>Loading…</div>
       )}
 
-      {top.kind === "search"
-        ? <SearchResults items={top.items} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
-        : isTrackList(top.node?.children || [])
-          ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} />
+      {top.kind === "search" ? (
+        <SearchResults items={top.items} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
+      ) : top.kind === "pins" ? (
+        pins.length === 0 ? (
+          <div className="lib-status" style={{ paddingTop: 40 }}>
+            <Icon name="bookmark" size={28} />
+            <div style={{ marginTop: 12, fontSize: 14, color: "var(--ink-2)" }}>
+              No pinned albums yet
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12 }}>
+              In Library, Browse, or Search, tap the bookmark icon on any
+              album, playlist, or artist to pin it here.
+            </div>
+          </div>
+        ) : (
+          <ItemGrid items={pins} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
+        )
+      ) : isTrackList(top.node?.children || [])
+          ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} onPlayInList={playTrackInList} />
           : <ItemGrid items={top.node?.children || []} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
       }
     </div>
@@ -1027,7 +1060,7 @@ function ItemGrid({ items, onEnter, isPinned, togglePin }) {
   );
 }
 
-function TrackList({ items, parent, onEnter }) {
+function TrackList({ items, parent, onEnter, onPlayInList }) {
   if (!items?.length) return <div className="lib-status">No tracks.</div>;
   return (
     <div className="track-list">
@@ -1039,7 +1072,16 @@ function TrackList({ items, parent, onEnter }) {
           <button
             key={(it.media_content_id || title) + i}
             className="track-row"
-            onClick={() => onEnter(it)}
+            // If we're viewing a list of tracks (an album/playlist), play
+            // this track and queue the rest of the list. Otherwise fall
+            // back to the standard enter() handler.
+            onClick={() => {
+              if (onPlayInList && it.media_content_id) {
+                onPlayInList(i, items);
+              } else {
+                onEnter(it);
+              }
+            }}
             title={title}
           >
             <div className="num">{i + 1}</div>
