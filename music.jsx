@@ -4,6 +4,29 @@
    controls via media_player.* services, and browses + searches MA library
    through a single Library component with stack-based navigation. */
 
+const SEARCH_MEDIA_FEATURE = 4194304;
+const supportsSearch = (st) =>
+  ((st?.attributes?.supported_features || 0) & SEARCH_MEDIA_FEATURE) === SEARCH_MEDIA_FEATURE;
+
+// Resolve the Music Assistant wrapper for a given configured media_player
+// entity. If the configured ID already supports search_media we trust it.
+// Otherwise we walk the _2 / _3 / _4 / ... siblings looking for the
+// search-capable twin. Falls back to the configured ID even if no match
+// (so service calls still go somewhere; they'll just error visibly).
+function resolveMaPlayer(baseId, states) {
+  if (!baseId || !states) return baseId;
+  if (supportsSearch(states[baseId])) return baseId;
+  const root = baseId.replace(/_\d+$/, "");
+  // Try the root first, then numeric suffixes
+  if (root !== baseId && supportsSearch(states[root])) return root;
+  for (let i = 2; i <= 10; i++) {
+    const cand = `${root}_${i}`;
+    if (cand === baseId) continue;
+    if (supportsSearch(states[cand])) return cand;
+  }
+  return baseId;
+}
+
 function MusicPage() {
   const hass = useHass();
   const cfg  = window.AETHER_CONFIG;
@@ -29,9 +52,14 @@ function MusicPage() {
   // whichever sibling is most active; services always target mediaPlayer.
   const liveRooms = React.useMemo(() => {
     const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
+    const states = hass?.states || {};
     const mapped = cfg.rooms.map(room => {
-      const ctrl    = hass?.states?.[room.mediaPlayer];
-      const display = room.displayPlayer ? hass?.states?.[room.displayPlayer] : null;
+      // Auto-resolve the MA wrapper if the configured entity isn't search-capable
+      const resolvedCtrlId = resolveMaPlayer(room.mediaPlayer, states);
+      const displayId      = room.displayPlayer
+        || (resolvedCtrlId !== room.mediaPlayer ? room.mediaPlayer : resolvedCtrlId.replace(/_\d+$/, ""));
+      const ctrl    = states[resolvedCtrlId];
+      const display = displayId && displayId !== resolvedCtrlId ? states[displayId] : null;
       const active  = [ctrl, display].filter(Boolean).sort(
         (a, b) => score(a.state) - score(b.state)
       )[0] || ctrl || display;
@@ -41,7 +69,8 @@ function MusicPage() {
         ...room,
         entity:   active,
         ctrl,
-        entityId: room.mediaPlayer,
+        entityId: resolvedCtrlId,
+        displayId,
         state:    active?.state || "unavailable",
         playing:  active?.state === "playing",
         paused:   active?.state === "paused",
@@ -210,6 +239,44 @@ function MusicPage() {
   const ungroupPrimary = () => primaryCtrl?.attributes?.group_members?.length > 1
     && svc("media_player.unjoin", { entity_id: primary.entityId });
 
+  // ─── Like / favorite the current track via MA ───────────────────────────
+  // MA's HA integration exposes different service names per version. Try a
+  // chain of likely candidates so the heart "just works" wherever possible.
+  const [liked, setLiked] = React.useState(false);
+  React.useEffect(() => { setLiked(false); }, [primaryCtrl?.attributes?.media_content_id]);
+
+  const toggleLike = async () => {
+    const ent = primary?.entityId;
+    const ct  = primaryCtrl?.attributes;
+    const mediaId   = ct?.media_content_id;
+    const mediaType = ct?.media_content_type;
+    if (!ent || !mediaId) return;
+    const want = !liked;
+    setLiked(want);
+    const attempts = want ? [
+      { service: "music_assistant.add_track_to_library",   data: { track_uri: mediaId } },
+      { service: "music_assistant.favorite",               data: { entity_id: ent, uri: mediaId, media_type: mediaType } },
+      { ws: { type: "music_assistant/library/add_favorite", uri: mediaId, media_type: mediaType } },
+    ] : [
+      { service: "music_assistant.remove_track_from_library", data: { track_uri: mediaId } },
+      { service: "music_assistant.unfavorite",                data: { entity_id: ent, uri: mediaId, media_type: mediaType } },
+      { ws: { type: "music_assistant/library/remove_favorite", uri: mediaId, media_type: mediaType } },
+    ];
+    for (const a of attempts) {
+      try {
+        if (a.service) {
+          const [d, s] = a.service.split(".");
+          await hass.callService(d, s, a.data);
+        } else {
+          await hass.callWS(a.ws);
+        }
+        return; // success
+      } catch (_) { /* try next */ }
+    }
+    setLiked(!want); // revert optimistic toggle if all attempts failed
+    console.warn("[aether] No MA favorite service responded — install/update Music Assistant integration.");
+  };
+
   if (!hass) {
     return (
       <div className="page music" style={{ padding: 40 }}>
@@ -322,7 +389,13 @@ function MusicPage() {
                 <div className="np-album">{primary?.album}</div>
               </div>
               <div className="np-actions">
-                <button className="action" title="Like (coming soon)"><Icon name="heart" /> Like</button>
+                <button
+                  className={"action" + (liked ? " on" : "")}
+                  onClick={toggleLike}
+                  title={liked ? "Remove from library" : "Add to library"}
+                >
+                  <Icon name="heart" /> {liked ? "Liked" : "Like"}
+                </button>
                 <button
                   className={"action" + (primaryCtrl?.attributes?.group_members?.length > 1 ? " on" : "")}
                   onClick={ungroupPrimary}
@@ -391,6 +464,35 @@ function MusicPage() {
             />
             <span className="vol-pct">{primary?.volume || 0}</span>
           </div>
+
+          {/* When the primary is the leader of a group, expose a slider per
+              member so each speaker can be balanced independently. */}
+          {primaryCtrl?.attributes?.group_members?.length > 1 && (
+            <div className="np-group-volumes">
+              <div className="np-group-volumes-head">Per-room volume</div>
+              {primaryCtrl.attributes.group_members.map(memberId => {
+                const member = hass.states[memberId];
+                if (!member) return null;
+                const name = member.attributes.friendly_name || memberId.split(".")[1];
+                const vol  = Math.round((member.attributes.volume_level ?? 0) * 100);
+                return (
+                  <div key={memberId} className="np-group-row">
+                    <span className="np-group-name">{name}</span>
+                    <input
+                      className="range thin"
+                      type="range" min="0" max="100"
+                      value={vol}
+                      onChange={(e) => callService(hass, "media_player.volume_set", {
+                        entity_id: memberId,
+                        volume_level: Number(e.target.value) / 100,
+                      })}
+                    />
+                    <span className="np-group-pct">{vol}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Library */}
