@@ -191,32 +191,6 @@ function HomePage({ navigate }) {
         </div>
       </div>
 
-      {/* Scenes */}
-      <div className="h-section">
-        <div className="h-section-head">
-          <h2>Scenes</h2>
-          <button className="h-link" onClick={() => setEditorOpen(true)}>Edit</button>
-        </div>
-        {scenes.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: "var(--ink-3)", fontSize: 13 }}>
-            No scenes pinned. Tap <b>Edit</b> to choose some.
-          </div>
-        ) : (
-          <div className="scenes">
-            {scenes.map(s => (
-              <button key={s.id || s.target} className="scene" onClick={() => fireScene(s)}>
-                <div className="icon"><Icon name={s.icon || "sparkle"} size={16} /></div>
-                <div className="gradient" style={{ background: s.grad || "linear-gradient(135deg, #6aa1d8, #14283f)" }} />
-                <div>
-                  <div className="name">{s.name}</div>
-                  <div className="meta">{s.meta}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Now playing snapshot + House map */}
       <div className="home-row">
         <div
