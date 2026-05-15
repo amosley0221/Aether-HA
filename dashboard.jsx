@@ -993,29 +993,11 @@ function CarSection({ car, hass, editMode, onHideSection }) {
               {sentryOn        && <span className="car-badge accent">Sentry</span>}
               {charging        && <span className="car-badge ok">⚡ Charging</span>}
               {!charging && cableConnected && <span className="car-badge">Plugged in</span>}
-              {chargePortOpen && !cableConnected && (
-                <span className="car-badge alert">Charge port open</span>
-              )}
+              {openParts.map((p) => (
+                <span key={p} className="car-badge alert">{p}</span>
+              ))}
             </div>
           </div>
-
-          {/* Visual + textual alert for any open door, frunk, trunk, etc. */}
-          {anyOpen && (
-            <div className="car-open-status">
-              <CarStatusDiagram
-                doors={doorOpen}
-                frunk={frunkOpen}
-                trunk={trunkOpen}
-                chargePort={chargePortOpen}
-              />
-              <div className="car-open-labels">
-                <div className="car-open-title">Open</div>
-                {openParts.map((p) => (
-                  <div key={p} className="car-open-label">{p}</div>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div className="car-battery">
             <div className="car-battery-track">
@@ -1087,84 +1069,178 @@ function CarSection({ car, hass, editMode, onHideSection }) {
   );
 }
 
-// Wraps Google's <model-viewer> and tries to drive the GLB's animations
-// or named meshes from the live entity states. The GLB needs to have
-// either:
-//   a) Named animation clips (e.g. "DoorOpenFL", "FrunkOpen", "TrunkOpen")
-//      that animate the corresponding panel from closed → open. We play
-//      forward to the end when open, reset to time 0 when closed.
-//   b) Named child meshes/nodes whose transforms we can rotate directly
-//      (more advanced, not yet implemented — would need Three.js access).
-// On first load we log the GLB's availableAnimations and scene hierarchy
-// to the console so we can see what's actually in the file.
+// Wraps Google's <model-viewer> and drives the GLB's animations from
+// the live entity states. Two playback modes:
+//
+//   • Multi-action (preferred): we walk the model-viewer element to find
+//     its internal THREE.AnimationMixer, then create an AnimationAction
+//     per clip and toggle each independently. Trunk + frunk + a door can
+//     all be open at the same time on the 3D model.
+//
+//   • Single-anim (fallback): if the mixer isn't reachable, we use the
+//     standard model-viewer API which only supports one active clip at
+//     a time. Priority order: charge port > trunk > frunk > combined
+//     doors. Other open parts still show in the badges row.
+//
+// _open_close style animations in the user's GLB cycle closed → open →
+// closed across their duration, so we pause at the midpoint to hold
+// the "fully open" pose.
 function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
-  const mvRef = React.useRef(null);
-  const [animMap, setAnimMap] = React.useState({});
+  const mvRef       = React.useRef(null);
+  const [animMap, setAnimMap]   = React.useState({});
+  const [actions, setActions]   = React.useState(null);
 
-  // On model load, inspect what's in it and build a name → state mapping
   React.useEffect(() => {
     const mv = mvRef.current;
     if (!mv) return;
+
     const onLoad = () => {
       const animations = mv.availableAnimations || [];
       console.log("[aether] GLB loaded:", src);
       console.log("[aether] availableAnimations:", animations);
-      try {
-        const model = mv.model;
-        if (model && model.materials) {
-          console.log("[aether] materials:", model.materials.map((m) => m.name));
-        }
-      } catch {}
 
-      // Heuristic matcher: which animation looks like which door/part
-      const match = (patterns) => {
-        for (const p of patterns) {
-          const hit = animations.find((a) => p.test(a));
-          if (hit) return hit;
+      const match = (...patterns) =>
+        animations.find((a) => patterns.some((p) => p.test(a)));
+
+      const map = {
+        combinedDoors: match(/^doors?[_ ]|^all.*doors|every.*door/i),
+        frontDriver:    match(/(?:fl|front.*left|driver)[_ ].*door|door.*(?:fl|front.*left|driver)/i),
+        frontPassenger: match(/(?:fr|front.*right|passenger)[_ ].*door|door.*(?:fr|front.*right|passenger)/i),
+        rearDriver:     match(/(?:rl|rear.*left|back.*left)[_ ].*door|door.*(?:rl|rear.*left|back.*left)/i),
+        rearPassenger:  match(/(?:rr|rear.*right|back.*right)[_ ].*door|door.*(?:rr|rear.*right|back.*right)/i),
+        frunk:          match(/frunk|hood|bonnet|front[_ ]?trunk|front[_ ]?lid/i),
+        trunk:          match(/^trunk|^rear[_ ]?lid|^boot|tailgate|liftgate/i),
+        chargePort:     match(/charge.?port|charging.?port|charger.?door/i),
+      };
+      console.log("[aether] animMap:", map);
+      setAnimMap(map);
+
+      // Best-effort probe for the internal THREE.AnimationMixer so we can
+      // drive multiple animations simultaneously. Walks a handful of
+      // known property paths on the model-viewer instance; quietly falls
+      // back to single-anim mode if it can't find one.
+      let mixer = null;
+      const seenObjs = new Set();
+      const visit = (obj, depth) => {
+        if (!obj || depth > 5 || seenObjs.has(obj) || typeof obj !== "object") return null;
+        seenObjs.add(obj);
+        if (Array.isArray(obj._actions) && typeof obj.update === "function" && obj._root) {
+          return obj;
+        }
+        for (const key of Object.keys(obj)) {
+          try {
+            const child = obj[key];
+            const found = visit(child, depth + 1);
+            if (found) return found;
+          } catch {}
+        }
+        for (const sym of Object.getOwnPropertySymbols(obj)) {
+          try {
+            const child = obj[sym];
+            const found = visit(child, depth + 1);
+            if (found) return found;
+          } catch {}
         }
         return null;
       };
-      setAnimMap({
-        frontDriver:    match([/door.*(fl|front.*left|driver|d_left|leftf)/i,    /(fl|left.*front|driver).*door/i]),
-        frontPassenger: match([/door.*(fr|front.*right|passenger|p_right|rightf)/i, /(fr|right.*front|passenger).*door/i]),
-        rearDriver:     match([/door.*(rl|rear.*left|back.*left|leftr)/i,        /(rl|left.*rear|left.*back).*door/i]),
-        rearPassenger:  match([/door.*(rr|rear.*right|back.*right|rightr)/i,     /(rr|right.*rear|right.*back).*door/i]),
-        frunk:          match([/frunk|hood|bonnet|front.*trunk|front.*lid/i]),
-        trunk:          match([/^trunk|rear.*lid|boot|tailgate|liftgate/i]),
-        chargePort:     match([/charge.*port|charge.*door|charger/i]),
-      });
+      try { mixer = visit(mv, 0); } catch {}
+
+      const clips = mv?.model?.animations;
+      if (mixer && Array.isArray(clips) && clips.length > 0) {
+        console.log("[aether] multi-anim mode (internal mixer found)");
+        const acts = {};
+        for (const clip of clips) {
+          try {
+            const action = mixer.clipAction(clip);
+            action.setLoop?.(2200, Infinity); // LoopOnce = 2200
+            action.clampWhenFinished = true;
+            action.enabled = false;
+            action.weight  = 0;
+            action.paused  = true;
+            action.time    = 0;
+            action.play();   // queue it; weight=0 keeps it invisible
+            acts[clip.name] = action;
+          } catch (e) {
+            console.warn("[aether] clipAction failed for", clip.name, e);
+          }
+        }
+        setActions(acts);
+      } else {
+        console.log("[aether] single-anim mode (mixer not found)");
+        setActions(null);
+      }
     };
+
     mv.addEventListener("load", onLoad);
     return () => mv.removeEventListener("load", onLoad);
   }, [src]);
 
-  // Apply current open/closed state to the animations
+  // Apply current open/closed state
   React.useEffect(() => {
+    if (!Object.keys(animMap).length) return;
     const mv = mvRef.current;
-    if (!mv || !Object.keys(animMap).length) return;
-    const set = (animName, isOpen) => {
-      if (!animName) return;
+    if (!mv) return;
+
+    const anyDoor =
+      doors.frontDriver || doors.frontPassenger ||
+      doors.rearDriver  || doors.rearPassenger;
+
+    if (actions) {
+      // ── Multi-anim path: each action independently held at midpoint
+      const setAction = (animName, isOpen) => {
+        if (!animName) return;
+        const action = actions[animName];
+        if (!action) return;
+        const duration = action.getClip().duration || 0;
+        action.enabled = true;
+        action.weight  = isOpen ? 1 : 0;
+        action.paused  = true;
+        action.time    = isOpen ? duration / 2 : 0;
+      };
+
+      // Use combined door anim for any-door-open, plus per-door if
+      // the GLB happens to expose them (it doesn't in this case)
+      setAction(animMap.combinedDoors,  anyDoor);
+      setAction(animMap.frontDriver,    doors.frontDriver);
+      setAction(animMap.frontPassenger, doors.frontPassenger);
+      setAction(animMap.rearDriver,     doors.rearDriver);
+      setAction(animMap.rearPassenger,  doors.rearPassenger);
+      setAction(animMap.frunk,          frunk);
+      setAction(animMap.trunk,          trunk);
+      setAction(animMap.chargePort,     chargePort);
+
+      // Single tick of the mixer to apply weights/time without animating
+      try { actions[Object.keys(actions)[0]]?.getMixer?.().update(0); } catch {}
+    } else {
+      // ── Single-anim path: priority chooser
+      const target =
+        (chargePort && animMap.chargePort) ? animMap.chargePort :
+        (trunk      && animMap.trunk)      ? animMap.trunk :
+        (frunk      && animMap.frunk)      ? animMap.frunk :
+        (anyDoor    && animMap.combinedDoors) ? animMap.combinedDoors :
+        null;
+
       try {
-        mv.animationName = animName;
-        // Set to last frame when open, first frame when closed. The GLB
-        // creator's intent for these animations is closed→open, so
-        // duration is the "fully open" state.
-        const duration = mv.duration || 0;
-        mv.currentTime = isOpen ? duration : 0;
-        mv.pause();
+        if (target) {
+          mv.animationName = target;
+          mv.pause();
+          const duration = mv.duration || 1;
+          mv.currentTime = duration / 2;   // midpoint of _open_close = fully open
+        } else {
+          // Nothing open — reset whichever animation is currently active
+          const reset = animMap.combinedDoors || animMap.trunk || animMap.frunk;
+          if (reset) {
+            mv.animationName = reset;
+            mv.pause();
+            mv.currentTime = 0;
+          }
+        }
       } catch (e) {
-        console.warn("[aether] anim set failed:", animName, e);
+        console.warn("[aether] animation update failed:", e);
       }
-    };
-    set(animMap.frontDriver,    doors.frontDriver);
-    set(animMap.frontPassenger, doors.frontPassenger);
-    set(animMap.rearDriver,     doors.rearDriver);
-    set(animMap.rearPassenger,  doors.rearPassenger);
-    set(animMap.frunk,          frunk);
-    set(animMap.trunk,          trunk);
-    set(animMap.chargePort,     chargePort);
+    }
   }, [
-    animMap,
+    animMap, actions,
     doors.frontDriver, doors.frontPassenger,
     doors.rearDriver,  doors.rearPassenger,
     frunk, trunk, chargePort,
