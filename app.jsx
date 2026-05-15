@@ -78,6 +78,7 @@ function ChatDialog({ open, onClose, hass }) {
   const [agents, setAgents]     = React.useState([]);
   const [agentId, setAgentId]   = React.useState(null);
   const scrollRef = React.useRef(null);
+  const scrollTop = useModalAnchor(open);
 
   // Load available conversation agents (Home Assistant + any LLM ones the
   // user has configured) so we can let them pick.
@@ -137,7 +138,7 @@ function ChatDialog({ open, onClose, hass }) {
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop chat-backdrop" onClick={onClose}>
+    <div className="modal-backdrop chat-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal chat-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>

@@ -1045,6 +1045,7 @@ function TrackList({ items, parent, onEnter }) {
 // speaker (crossfade, loudness, night sound, etc.). We list whichever
 // exist for the primary room and let the user toggle them.
 function EQDialog({ open, onClose, room, hass }) {
+  const scrollTop = useModalAnchor(open);
   if (!open || !room) return null;
   const base = (room.displayId || room.entityId || "").replace(/^media_player\./, "");
   const root = base.replace(/_\d+$/, "");
@@ -1065,7 +1066,7 @@ function EQDialog({ open, onClose, room, hass }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{room.name} · EQ & Audio</h3>
@@ -1107,6 +1108,7 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
   const [items, setItems]     = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [err, setErr]         = React.useState(null);
+  const scrollTop             = useModalAnchor(open);
 
   React.useEffect(() => {
     if (!open || !entityId || !hassRef.current) return;
@@ -1137,8 +1139,6 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
     })();
   }, [open, entityId, hassRef]);
 
-  if (!open) return null;
-
   const jumpTo = async (index, item) => {
     const tries = [
       { service: "media_player.play_media", data: {
@@ -1161,8 +1161,10 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
     }
   };
 
+  if (!open) return null;
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Up Next</h3>

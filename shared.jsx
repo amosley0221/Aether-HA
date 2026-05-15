@@ -151,7 +151,28 @@ const callService = async (hass, svc, data = {}) => {
 const entityName = (st, fallback) =>
   st?.attributes?.friendly_name || fallback || st?.entity_id || "";
 
+// Captures the aether-panel's scrollTop the moment a modal opens, so the
+// backdrop can be positioned at the user's current viewport position.
+// Without this, modals inside HA's nested shadow DOM sometimes anchor at
+// panel y=0 (off-screen if the user scrolled down). Also locks scroll on
+// the panel while open so the modal can't drift out of view.
+const useModalAnchor = (open) => {
+  const [top, setTop] = React.useState(0);
+  React.useEffect(() => {
+    if (!open) return;
+    const panel = document.querySelector("aether-panel");
+    setTop(panel?.scrollTop || window.scrollY || 0);
+    if (panel) {
+      const prev = panel.style.overflow;
+      panel.style.overflow = "hidden";
+      return () => { panel.style.overflow = prev; };
+    }
+  }, [open]);
+  return top;
+};
+
 Object.assign(window, {
   ROOMS_INITIAL, ALBUMS, Icon, Bars, SoundBars, Avatar, MiniRoomRow, fmt,
   HassContext, HassProvider, useHass, useEntity, callService, entityName,
+  useModalAnchor,
 });

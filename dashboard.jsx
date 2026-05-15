@@ -543,6 +543,7 @@ function DashboardPage() {
 // Lists every device/section currently hidden so the user can bring
 // them back. Friendly names come from hass.states attributes.
 function HiddenManagerDialog({ open, onClose, hidden, hass, showDevice, showSection }) {
+  const scrollTop = useModalAnchor(open);
   if (!open) return null;
   const sections = hidden.sections || [];
   const devices  = (hidden.devices || []).map((id) => ({
@@ -553,7 +554,7 @@ function HiddenManagerDialog({ open, onClose, hidden, hass, showDevice, showSect
   }));
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Hidden items</h3>
@@ -600,49 +601,58 @@ function HiddenManagerDialog({ open, onClose, hidden, hass, showDevice, showSect
   );
 }
 
-// Full-size camera live view. Re-signs the camera_proxy path every 30 s
-// (the sign_path token expires in 60 s) and bumps a cache-bust tick every
-// second so the image actually re-fetches. Uses a CSS background-image
-// (same approach as the dashboard tiles that work) instead of an <img>
-// tag — iOS Safari sometimes refuses to load camera_proxy URLs via <img>.
+// Full-size camera live view. To get a fresh frame we sign a fresh path
+// every ~1.5 s with a unique time query (`?time=<ms>`), so each request
+// hits the server with a distinct signed URL. Appending bust params
+// AFTER signing breaks HA's path signature — the time must be in the
+// path that gets signed.
+//
+// The modal also has to fight HA's nested shadow DOM, where position:
+// fixed sometimes collapses to absolute (because an ancestor has a
+// transform/filter creating a new containing block). We capture the
+// scrolling panel's scrollTop on open and use it as the backdrop's
+// top so the modal lands in the viewport the user clicked from.
 function CameraDialog({ open, camera, hass, onClose }) {
   const [signedUrl, setSignedUrl] = React.useState("");
-  const [tick, setTick] = React.useState(0);
+  const scrollTop = useModalAnchor(open);
 
   React.useEffect(() => {
     if (!open || !camera || !hass) return;
     let cancelled = false;
     const sign = async () => {
-      try {
-        const r = await hass.callWS({
-          type: "auth/sign_path",
-          path: camera.proxyPath || `/api/camera_proxy/${camera.id}`,
-          expires: 60,
-        });
-        if (!cancelled && r?.path) setSignedUrl(r.path);
-      } catch {
-        if (!cancelled) {
-          setSignedUrl(camera.thumb || `/api/camera_proxy/${camera.id}`);
-        }
+      const base = camera.proxyPath || `/api/camera_proxy/${camera.id}`;
+      // Try sign-with-time first; if that fails (some HA versions reject
+      // extra query params), fall back to the bare path.
+      for (const path of [`${base}?time=${Date.now()}`, base]) {
+        try {
+          const r = await hass.callWS({
+            type: "auth/sign_path",
+            path,
+            expires: 60,
+          });
+          if (!cancelled && r?.path) {
+            setSignedUrl(r.path);
+            return;
+          }
+        } catch (_) { /* try next */ }
+      }
+      if (!cancelled) {
+        setSignedUrl(camera.thumb || `/api/camera_proxy/${camera.id}`);
       }
     };
     sign();
-    const signId = setInterval(sign, 30 * 1000);
-    const tickId = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(signId);
-      clearInterval(tickId);
-    };
+    const id = setInterval(sign, 1500);
+    return () => { cancelled = true; clearInterval(id); };
   }, [open, camera, hass]);
 
   if (!open || !camera) return null;
-  const src = signedUrl
-    ? signedUrl + (signedUrl.includes("?") ? "&" : "?") + "_t=" + tick
-    : "";
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      style={{ top: scrollTop }}
+    >
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>
@@ -655,21 +665,21 @@ function CameraDialog({ open, camera, hass, onClose }) {
           <div
             style={{
               width: "100%",
-              minHeight: 360,
-              aspectRatio: "16 / 9",
+              minHeight: 320,
               maxHeight: "70vh",
-              backgroundImage: src ? `url('${src}')` : "none",
+              height: "55vh",
+              backgroundImage: signedUrl ? `url('${signedUrl}')` : "none",
               backgroundColor: "#0a0a0a",
               backgroundSize: "contain",
               backgroundRepeat: "no-repeat",
               backgroundPosition: "center",
-              display: src ? "block" : "grid",
+              display: signedUrl ? "block" : "grid",
               placeItems: "center",
               color: "#777",
               fontSize: 13,
             }}
           >
-            {!src && "Loading stream…"}
+            {!signedUrl && "Loading stream…"}
           </div>
         </div>
       </div>

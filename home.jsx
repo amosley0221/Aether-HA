@@ -328,6 +328,7 @@ function HomePage({ navigate }) {
 // the Home page. Persisted to HA's user data (synced across devices).
 function SceneEditor({ open, onClose, hass, current, onSave }) {
   const [selected, setSelected] = React.useState([]);
+  const scrollTop = useModalAnchor(open);
   React.useEffect(() => {
     if (!open) return;
     setSelected((current || []).map((s) => s.target).filter(Boolean));
@@ -379,7 +380,7 @@ function SceneEditor({ open, onClose, hass, current, onSave }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Edit home scenes <span style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 400, marginLeft: 8 }}>{selected.length} / 10</span></h3>
