@@ -47,6 +47,12 @@ const AETHER_CONFIG = {
     // default builtin one; Piper, OpenAI, ElevenLabs etc. also work).
     ttsMediaPlayer:  "media_player.pixel_tablet",  // play TTS here
     ttsService:      "tts.google_translate_en_com", // entity_id of the TTS service
+    // Skip browser Web Speech and always route through HA. Useful on
+    // tablets in kiosk mode where you want responses on the device's
+    // speakers (via the Cast media_player) rather than the browser's
+    // (often robotic) built-in voices. Trade-off: ~500ms latency for
+    // HA to generate audio and stream it back.
+    forceHATTS:      false,
   },
 
   // mediaPlayer  = control entity (Music Assistant wrapper, supports

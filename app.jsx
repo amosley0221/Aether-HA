@@ -305,9 +305,13 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
       }
     };
 
-    const browserOK = await tryBrowserTTS();
+    const browserOK = voiceCfg.forceHATTS ? false : await tryBrowserTTS();
     if (!browserOK) {
-      console.log("[aether] browser TTS failed/unavailable — trying HA TTS fallback");
+      if (!voiceCfg.forceHATTS) {
+        console.log("[aether] browser TTS failed/unavailable — trying HA TTS fallback");
+      } else {
+        console.log("[aether] forceHATTS — routing TTS through HA");
+      }
       await tryHATTS();
     }
   }, [speakReplies, voiceCfg, hass]);
