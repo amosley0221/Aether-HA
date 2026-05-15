@@ -1221,61 +1221,66 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
       (chargePort && animMap.chargePort)    ? animMap.chargePort :
       null;
 
-    const lastTarget = lastTargetRef.current;
-
-    // Cancel any pending pause from a previous transition
-    if (lastTarget?.pauseTimer) {
-      clearTimeout(lastTarget.pauseTimer);
+    // Cancel any in-flight monitor from a previous transition
+    if (lastTargetRef.current?.cancelled) {
+      lastTargetRef.current.cancelled.value = true;
     }
 
-    if (target) {
+    if (!target) {
+      // Nothing open — pause and reset
       try {
-        // Switch animation if needed
-        mv.animationName = target;
-        // Always start from frame 0 and play forward to the midpoint. The
-        // animation cycles closed → open → closed across its full duration,
-        // so the midpoint is the "fully open" pose. We must let the mixer
-        // run (i.e. NOT pause immediately) so bone positions actually
-        // update; otherwise the model stays at the rest pose.
+        mv.pause();
         mv.currentTime = 0;
-        mv.play({ repetitions: 1 });
-        const fullDurMs = (mv.duration || 4) * 1000;
-        const holdAtMs  = fullDurMs / 2;
-        const pauseTimer = setTimeout(() => {
-          try {
-            mv.pause();
-            mv.currentTime = (mv.duration || 4) / 2;
-          } catch (e) {
-            console.warn("[aether] pause at midpoint failed:", e);
-          }
-        }, holdAtMs);
-        lastTargetRef.current = { name: target, pauseTimer };
-      } catch (e) {
-        console.warn("[aether] animation play failed:", e);
-      }
-    } else {
-      // Nothing open — close any panel currently open by playing the second
-      // half of its animation (midpoint → end = closed for _open_close).
-      const closeName = lastTarget?.name
-        || animMap.combinedDoors || animMap.trunk || animMap.frunk;
-      if (closeName) {
+      } catch {}
+      return;
+    }
+
+    // Strategy that actually works on model-viewer:
+    //   1. Setting mv.duration immediately after mv.animationName = ...
+    //      returns 0 because the new clip hasn't been bound yet. So we
+    //      can't pre-compute "how long until midpoint" with setTimeout.
+    //   2. Instead, set the animation, start it playing in a loop, and
+    //      poll currentTime every requestAnimationFrame. As soon as
+    //      currentTime crosses duration/2, pause and clamp there.
+    //   3. Use setAttribute (not just the property) — Lit reflects but
+    //      attribute-set is more reliable for re-binding the action.
+    try {
+      console.log("[aether] holding", target, "at midpoint");
+      mv.setAttribute("animation-name", target);
+      mv.animationName = target;
+      mv.currentTime = 0;
+      mv.play({ repetitions: Infinity });
+
+      const cancelled = { value: false };
+      lastTargetRef.current = { name: target, cancelled };
+
+      const startedAt = performance.now();
+      const monitor = () => {
+        if (cancelled.value) return;
         try {
-          mv.animationName = closeName;
-          mv.currentTime = (mv.duration || 4) / 2;
-          mv.play({ repetitions: 1 });
-          const fullDurMs = (mv.duration || 4) * 1000;
-          const holdAtMs  = fullDurMs / 2;
-          const pauseTimer = setTimeout(() => {
-            try {
-              mv.pause();
-              mv.currentTime = mv.duration || 4;
-            } catch {}
-          }, holdAtMs);
-          lastTargetRef.current = { name: closeName, pauseTimer };
+          const dur = mv.duration;
+          // Wait until duration is known AND we've passed the midpoint
+          if (dur > 0 && mv.currentTime >= dur / 2) {
+            mv.pause();
+            mv.currentTime = dur / 2;
+            console.log("[aether] paused at midpoint", dur / 2, "of", dur);
+            return;
+          }
+          // Hard timeout: if duration never resolves or we never hit
+          // midpoint after 10s, give up to avoid burning CPU forever.
+          if (performance.now() - startedAt > 10000) {
+            console.warn("[aether] monitor timeout for", target, "duration:", dur);
+            return;
+          }
         } catch (e) {
-          console.warn("[aether] close animation failed:", e);
+          console.warn("[aether] monitor error:", e);
+          return;
         }
-      }
+        requestAnimationFrame(monitor);
+      };
+      requestAnimationFrame(monitor);
+    } catch (e) {
+      console.warn("[aether] animation start failed:", e);
     }
   }, [
     animMap, actions,
