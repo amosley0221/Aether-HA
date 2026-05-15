@@ -1116,38 +1116,81 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
       setAnimMap(map);
 
       // Best-effort probe for the internal THREE.AnimationMixer so we can
-      // drive multiple animations simultaneously. Walks a handful of
-      // known property paths on the model-viewer instance; quietly falls
-      // back to single-anim mode if it can't find one.
+      // drive multiple animations simultaneously. model-viewer stores the
+      // mixer under a Symbol-keyed property (the symbol's description is
+      // usually 'mixer') OR on the internal ModelScene. We try several
+      // access paths and fall back to a deep walk.
       let mixer = null;
-      const seenObjs = new Set();
-      const visit = (obj, depth) => {
-        if (!obj || depth > 5 || seenObjs.has(obj) || typeof obj !== "object") return null;
-        seenObjs.add(obj);
-        if (Array.isArray(obj._actions) && typeof obj.update === "function" && obj._root) {
-          return obj;
-        }
-        for (const key of Object.keys(obj)) {
+
+      // Strategy 1: direct mv symbol whose description contains "mixer"
+      for (const sym of Object.getOwnPropertySymbols(mv)) {
+        const desc = sym.description || sym.toString();
+        if (/mixer/i.test(desc)) {
           try {
-            const child = obj[key];
-            const found = visit(child, depth + 1);
-            if (found) return found;
+            const m = mv[sym];
+            if (m && Array.isArray(m._actions) && typeof m.update === "function") {
+              mixer = m;
+              console.log("[aether] mixer via direct symbol:", desc);
+              break;
+            }
           } catch {}
         }
-        for (const sym of Object.getOwnPropertySymbols(obj)) {
+      }
+
+      // Strategy 2: scene symbol → scene.mixer or scene[symbol]
+      if (!mixer) {
+        for (const sym of Object.getOwnPropertySymbols(mv)) {
           try {
-            const child = obj[sym];
-            const found = visit(child, depth + 1);
-            if (found) return found;
+            const scene = mv[sym];
+            if (!scene || typeof scene !== "object") continue;
+            if (scene.mixer && Array.isArray(scene.mixer._actions)) {
+              mixer = scene.mixer;
+              console.log("[aether] mixer via scene[", sym.description || "?", "].mixer");
+              break;
+            }
+            for (const subSym of Object.getOwnPropertySymbols(scene)) {
+              const subDesc = subSym.description || subSym.toString();
+              if (!/mixer/i.test(subDesc)) continue;
+              try {
+                const m = scene[subSym];
+                if (m && Array.isArray(m._actions)) {
+                  mixer = m;
+                  console.log("[aether] mixer via nested symbol:", subDesc);
+                  break;
+                }
+              } catch {}
+            }
+            if (mixer) break;
           } catch {}
         }
-        return null;
-      };
-      try { mixer = visit(mv, 0); } catch {}
+      }
+
+      // Strategy 3: deep walk (last resort, both enumerable and non-enumerable)
+      if (!mixer) {
+        const seenDeep = new WeakSet();
+        const walk = (obj, depth) => {
+          if (mixer || !obj || typeof obj !== "object" ||
+              seenDeep.has(obj) || depth > 8) return;
+          seenDeep.add(obj);
+          if (Array.isArray(obj._actions) && typeof obj.update === "function" && obj._root) {
+            mixer = obj;
+            console.log("[aether] mixer via deep walk, depth", depth);
+            return;
+          }
+          let keys = [];
+          try { keys.push(...Object.getOwnPropertyNames(obj)); } catch {}
+          try { keys.push(...Object.getOwnPropertySymbols(obj)); } catch {}
+          for (const k of keys) {
+            if (mixer) return;
+            try { walk(obj[k], depth + 1); } catch {}
+          }
+        };
+        try { walk(mv, 0); } catch {}
+      }
 
       const clips = mv?.model?.animations;
       if (mixer && Array.isArray(clips) && clips.length > 0) {
-        console.log("[aether] multi-anim mode (internal mixer found)");
+        console.log("[aether] multi-anim mode — building action map");
         const acts = {};
         for (const clip of clips) {
           try {
@@ -1158,7 +1201,7 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
             action.weight  = 0;
             action.paused  = true;
             action.time    = 0;
-            action.play();   // queue it; weight=0 keeps it invisible
+            action.play();
             acts[clip.name] = action;
           } catch (e) {
             console.warn("[aether] clipAction failed for", clip.name, e);
@@ -1166,7 +1209,7 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
         }
         setActions(acts);
       } else {
-        console.log("[aether] single-anim mode (mixer not found)");
+        console.log("[aether] single-anim mode (mixer not found or no clips)");
         setActions(null);
       }
     };
