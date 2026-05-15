@@ -346,6 +346,40 @@
   text-shadow: 0 2px 8px rgba(0,0,0,.4);
   line-height: 1.15;
 }
+
+/* Pin/unpin button overlaid on each album tile. Visible by default
+   (with a subtle backdrop) so iPad touch users can see it; toggles to
+   the accent color when pinned. */
+.album-pin {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.85);
+  color: var(--ink-2);
+  -webkit-backdrop-filter: blur(8px);
+          backdrop-filter: blur(8px);
+  display: grid; place-items: center;
+  border: 0;
+  cursor: pointer;
+  z-index: 2;
+  opacity: .65;
+  transition: opacity .15s, background .15s, color .15s, transform .12s;
+}
+.album:hover .album-pin { opacity: 1; }
+.album-pin:hover { background: #fff; color: var(--ink); transform: scale(1.06); }
+.album-pin.pinned {
+  background: var(--accent);
+  color: #fff;
+  opacity: 1;
+  box-shadow: 0 2px 6px rgba(42,111,219,.4);
+}
+@media (hover: none) {
+  /* Touch devices: always show the pin button at full opacity */
+  .album-pin { opacity: 1; }
+}
 .album-title {
   font-size: 13px; font-weight: 500; letter-spacing: -.005em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

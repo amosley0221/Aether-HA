@@ -78,6 +78,8 @@ const Icon = ({ name, size = 16 }) => {
     expand:  <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>,
     settings:<svg viewBox="0 0 24 24" width={size} height={size}><circle cx="12" cy="12" r="3" {...p}/><path {...p} d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.5-2.4.8a7 7 0 0 0-2.1-1.2L14 3h-4l-.4 2.4a7 7 0 0 0-2.1 1.2l-2.4-.8-2 3.5 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.5 2.4-.8a7 7 0 0 0 2.1 1.2L10 21h4l.4-2.4a7 7 0 0 0 2.1-1.2l2.4.8 2-3.5-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>,
     wifi:    <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M5 12a10 10 0 0 1 14 0"/><path {...p} d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>,
+    bookmark:       <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M6 3h12v19l-6-4.2L6 22z"/></svg>,
+    bookmarkFilled: <svg viewBox="0 0 24 24" width={size} height={size}><path d="M6 3h12v19l-6-4.2L6 22z" fill="currentColor"/></svg>,
   };
   return svgs[name] || null;
 };

@@ -419,7 +419,6 @@ function MusicPage() {
             playMedia={playMedia}
             tab={tab}
             externalQuery={search}
-            listenNow={cfg.listenNow}
           />
         </div>
       </div>
@@ -452,13 +451,83 @@ const LIB_TAB_TARGETS = {
   ],
 };
 
+// Pins persistence — HA's per-user storage (syncs across browsers/devices),
+// with a localStorage fallback. Stored as an array of { title, image,
+// media_content_id, media_content_type } objects.
+function usePins(hassRef) {
+  const [pins, setPins]     = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let initial = null;
+      try {
+        const r = await hassRef.current.callWS({
+          type: "frontend/get_user_data",
+          key:  "aether_pins",
+        });
+        if (Array.isArray(r?.value)) initial = r.value;
+      } catch {/* WS storage unavailable */}
+      if (initial == null) {
+        try {
+          const stored = localStorage.getItem("aether_pins");
+          if (stored) initial = JSON.parse(stored);
+        } catch {}
+      }
+      if (!cancelled) {
+        setPins(Array.isArray(initial) ? initial : []);
+        setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const save = async (next) => {
+    setPins(next);
+    try { localStorage.setItem("aether_pins", JSON.stringify(next)); } catch {}
+    try {
+      await hassRef.current?.callWS({
+        type: "frontend/set_user_data",
+        key:  "aether_pins",
+        value: next,
+      });
+    } catch {}
+  };
+
+  const isPinned = (id) => pins.some(p => p.media_content_id === id);
+
+  const addPin = (item) => {
+    const id = item.media_content_id;
+    if (!id || isPinned(id)) return;
+    save([...pins, {
+      title: item.title || item.name,
+      image: item.thumbnail || item.image,
+      media_content_id:   id,
+      media_content_type: item.media_content_type || item.media_type,
+    }]);
+  };
+
+  const removePin = (id) => save(pins.filter(p => p.media_content_id !== id));
+
+  return { pins, addPin, removePin, isPinned, loaded };
+}
+
 // ─── Unified Library: stack-based navigation across browse + search ──────
-function Library({ entityId, hassRef, playMedia, tab, externalQuery, listenNow }) {
+function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
   // Each entry is { kind: "browse" | "search", node?, items?, query?, title? }
   const [stack, setStack]     = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [err, setErr]         = React.useState(null);
   const [query, setQuery]     = React.useState(externalQuery || "");
+
+  const { pins, addPin, removePin, isPinned, loaded: pinsLoaded } = usePins(hassRef);
+  const togglePin = (item) => {
+    const id = item.media_content_id;
+    if (!id) return;
+    if (isPinned(id)) removePin(id);
+    else addPin(item);
+  };
 
   // Sync external query (top speakers-card search bar)
   React.useEffect(() => {
@@ -471,15 +540,16 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery, listenNow }
     if (!entityId || !hassRef.current) return;
     setErr(null);
     setStack([]);
+    if (tab === "Listen Now") {
+      // Rendered from pins directly (live), not from the stack — leave empty.
+      return;
+    }
     if (tab === "Search") {
       if (query.trim()) runSearch(query.trim());
-    } else if (tab === "Listen Now" && Array.isArray(listenNow) && listenNow.length > 0) {
-      // User pinned specific items — render as a static section
-      setStack([{ kind: "static", items: listenNow, title: "Listen Now" }]);
     } else {
       runBrowse();
     }
-  }, [tab, entityId, listenNow]);
+  }, [tab, entityId]);
 
   // Debounced search re-run when query changes (Search tab only).
   React.useEffect(() => {
@@ -595,6 +665,39 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery, listenNow }
 
   const top = stack[stack.length - 1];
 
+  // Listen Now → render pinned albums directly (not via the browse stack)
+  if (tab === "Listen Now") {
+    if (!pinsLoaded) {
+      return <div className="lib-body"><div className="lib-status">Loading…</div></div>;
+    }
+    return (
+      <div className="lib-body">
+        <div className="lib-section-head">
+          <h3>Listen Now</h3>
+          {pins.length > 0 && (
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+              {pins.length} pinned · tap bookmark to remove
+            </span>
+          )}
+        </div>
+        {pins.length === 0 ? (
+          <div className="lib-status" style={{ paddingTop: 40 }}>
+            <Icon name="bookmark" size={28} />
+            <div style={{ marginTop: 12, fontSize: 14, color: "var(--ink-2)" }}>
+              No pinned albums yet
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12 }}>
+              In Library, Browse, or Search, tap the bookmark icon on any
+              album, playlist, or artist to pin it here.
+            </div>
+          </div>
+        ) : (
+          <ItemGrid items={pins} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
+        )}
+      </div>
+    );
+  }
+
   if (err) {
     return (
       <div className="lib-body">
@@ -639,19 +742,17 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery, listenNow }
       )}
 
       {top.kind === "search"
-        ? <SearchResults items={top.items} onEnter={enter} />
-        : top.kind === "static"
-          ? <ItemGrid items={top.items} onEnter={enter} />
-          : isTrackList(top.node?.children || [])
-            ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} />
-            : <ItemGrid items={top.node?.children || []} onEnter={enter} />
+        ? <SearchResults items={top.items} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
+        : isTrackList(top.node?.children || [])
+          ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} />
+          : <ItemGrid items={top.node?.children || []} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
       }
     </div>
   );
 }
 
 // Groups raw search results by class and renders sections
-function SearchResults({ items, onEnter }) {
+function SearchResults({ items, onEnter, isPinned, togglePin }) {
   const buckets = { artist: [], album: [], track: [], playlist: [], radio: [], other: [] };
   for (const it of items) {
     const cls = (it.media_class || it.media_content_type || "").toLowerCase();
@@ -679,7 +780,7 @@ function SearchResults({ items, onEnter }) {
           </div>
           {sec.tracks
             ? <TrackList items={sec.items} onEnter={onEnter} />
-            : <ItemGrid items={sec.items} onEnter={onEnter} />
+            : <ItemGrid items={sec.items} onEnter={onEnter} isPinned={isPinned} togglePin={togglePin} />
           }
         </div>
       ))}
@@ -687,19 +788,21 @@ function SearchResults({ items, onEnter }) {
   );
 }
 
-function ItemGrid({ items, onEnter }) {
+function ItemGrid({ items, onEnter, isPinned, togglePin }) {
   if (!items?.length) {
     return <div className="lib-status">Nothing here.</div>;
   }
   return (
     <div className="album-row">
       {items.map((item, i) => {
-        const title = item.title || item.name;
-        const art   = item.thumbnail || item.image;
-        const type  = item.media_class || item.media_content_type || "";
+        const title  = item.title || item.name;
+        const art    = item.thumbnail || item.image;
+        const type   = item.media_class || item.media_content_type || "";
+        const id     = item.media_content_id;
+        const pinned = isPinned && id ? isPinned(id) : false;
         return (
           <div
-            key={(item.media_content_id || title) + i}
+            key={(id || title) + i}
             className="album"
             onClick={() => onEnter(item)}
             title={title}
@@ -712,6 +815,17 @@ function ItemGrid({ items, onEnter }) {
               }
             >
               {!art && <div className="label">{title}</div>}
+              {togglePin && id && (
+                <button
+                  className={"album-pin" + (pinned ? " pinned" : "")}
+                  onClick={(e) => { e.stopPropagation(); togglePin(item); }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  title={pinned ? "Unpin from Listen Now" : "Pin to Listen Now"}
+                  aria-label={pinned ? "Unpin" : "Pin"}
+                >
+                  <Icon name={pinned ? "bookmarkFilled" : "bookmark"} size={13} />
+                </button>
+              )}
             </div>
             <div className="album-title">{title}</div>
             <div className="album-meta">{type}</div>
