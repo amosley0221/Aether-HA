@@ -777,8 +777,29 @@ function CarSection({ car, hass, editMode, onHideSection }) {
   const shift          = state(e.shiftState);
   const isDriving      = speed > 0 || (shift && shift !== "P" && shift !== "unknown");
 
+  // Door / cover state — frunk and trunk are HA covers, doors are binary
+  // sensors that read "on" when open. Charge port is also a cover.
   const doors = e.doors || {};
-  const anyDoorOpen = Object.values(doors).some(id => state(id) === "on");
+  const doorOpen = {
+    frontDriver:    state(doors.frontDriver)    === "on",
+    frontPassenger: state(doors.frontPassenger) === "on",
+    rearDriver:     state(doors.rearDriver)     === "on",
+    rearPassenger:  state(doors.rearPassenger)  === "on",
+  };
+  const frunkOpen       = state(e.frunk)      === "open";
+  const trunkOpen       = state(e.trunk)      === "open";
+  const chargePortOpen  = state(e.chargePort) === "open";
+  const ventWindowsOpen = state(e.ventWindows) === "open";
+
+  const openParts = [];
+  if (doorOpen.frontDriver)    openParts.push("Driver door");
+  if (doorOpen.frontPassenger) openParts.push("Passenger door");
+  if (doorOpen.rearDriver)     openParts.push("Rear-left door");
+  if (doorOpen.rearPassenger)  openParts.push("Rear-right door");
+  if (frunkOpen)               openParts.push("Frunk");
+  if (trunkOpen)               openParts.push("Trunk");
+  if (ventWindowsOpen)         openParts.push("Windows vented");
+  const anyOpen = openParts.length > 0;
 
   const svc = (service, data) => callService(hass, service, data);
   const toggle = (entityId, on) => svc(on ? "switch.turn_off" : "switch.turn_on", { entity_id: entityId });
@@ -843,13 +864,33 @@ function CarSection({ car, hass, editMode, onHideSection }) {
               <div className="car-sub">{car.year} {car.model} · {car.color}{car.wheels ? ` · ${car.wheels}` : ""}</div>
             </div>
             <div className="car-status-badges">
-              {anyDoorOpen      && <span className="car-badge alert">Door open</span>}
-              {!isLocked        && <span className="car-badge warn">Unlocked</span>}
-              {sentryOn         && <span className="car-badge accent">Sentry</span>}
-              {charging         && <span className="car-badge ok">⚡ Charging</span>}
+              {!isLocked       && <span className="car-badge warn">Unlocked</span>}
+              {sentryOn        && <span className="car-badge accent">Sentry</span>}
+              {charging        && <span className="car-badge ok">⚡ Charging</span>}
               {!charging && cableConnected && <span className="car-badge">Plugged in</span>}
+              {chargePortOpen && !cableConnected && (
+                <span className="car-badge alert">Charge port open</span>
+              )}
             </div>
           </div>
+
+          {/* Visual + textual alert for any open door, frunk, trunk, etc. */}
+          {anyOpen && (
+            <div className="car-open-status">
+              <CarStatusDiagram
+                doors={doorOpen}
+                frunk={frunkOpen}
+                trunk={trunkOpen}
+                chargePort={chargePortOpen}
+              />
+              <div className="car-open-labels">
+                <div className="car-open-title">Open</div>
+                {openParts.map((p) => (
+                  <div key={p} className="car-open-label">{p}</div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="car-battery">
             <div className="car-battery-track">
@@ -918,6 +959,58 @@ function CarSection({ car, hass, editMode, onHideSection }) {
         </div>
       </div>
     </>
+  );
+}
+
+// Top-down schematic of the car body with door / frunk / trunk / charge-port
+// states. Highlights any open part in alert-red. Compact (≈100×170) so it
+// can live inline beside the badges row.
+function CarStatusDiagram({ doors, frunk, trunk, chargePort }) {
+  const fill = (open) => open ? "#e1314a" : "#f0f0f0";
+  const stroke = (open) => open ? "#9a1d2a" : "#bbb";
+  const sw = (open) => open ? 1.5 : 0.8;
+  const glass = "rgba(80, 100, 120, .28)";
+  const txt = (open) => open ? "#fff" : "#888";
+
+  return (
+    <svg viewBox="0 0 120 200" width="92" height="155" xmlns="http://www.w3.org/2000/svg" aria-label="Car door status">
+      {/* Body */}
+      <rect x="14" y="10" width="92" height="180" rx="24" fill="#fafafa" stroke="#999" strokeWidth="1.2"/>
+      {/* Roof glass */}
+      <rect x="28" y="55" width="64" height="90" fill={glass} stroke="#aaa" strokeWidth="0.5"/>
+      {/* Windshield */}
+      <path d="M 24 46 Q 60 38 96 46 L 90 55 L 30 55 Z" fill={glass} stroke="#aaa" strokeWidth="0.5"/>
+      {/* Rear window */}
+      <path d="M 30 145 L 90 145 L 96 156 Q 60 162 24 156 Z" fill={glass} stroke="#aaa" strokeWidth="0.5"/>
+
+      {/* Frunk */}
+      <rect x="28" y="14" width="64" height="20" rx="5"
+            fill={fill(frunk)} stroke={stroke(frunk)} strokeWidth={sw(frunk)}/>
+      <text x="60" y="28" textAnchor="middle" fontSize="8" fontWeight="700" fill={txt(frunk)}>FRUNK</text>
+
+      {/* Trunk */}
+      <rect x="28" y="166" width="64" height="20" rx="5"
+            fill={fill(trunk)} stroke={stroke(trunk)} strokeWidth={sw(trunk)}/>
+      <text x="60" y="180" textAnchor="middle" fontSize="8" fontWeight="700" fill={txt(trunk)}>TRUNK</text>
+
+      {/* Doors */}
+      <rect x="14" y="62"  width="14" height="40" rx="3"
+            fill={fill(doors.frontDriver)} stroke={stroke(doors.frontDriver)} strokeWidth={sw(doors.frontDriver)}/>
+      <rect x="92" y="62"  width="14" height="40" rx="3"
+            fill={fill(doors.frontPassenger)} stroke={stroke(doors.frontPassenger)} strokeWidth={sw(doors.frontPassenger)}/>
+      <rect x="14" y="106" width="14" height="38" rx="3"
+            fill={fill(doors.rearDriver)} stroke={stroke(doors.rearDriver)} strokeWidth={sw(doors.rearDriver)}/>
+      <rect x="92" y="106" width="14" height="38" rx="3"
+            fill={fill(doors.rearPassenger)} stroke={stroke(doors.rearPassenger)} strokeWidth={sw(doors.rearPassenger)}/>
+
+      {/* Charge port (small dot on rear left) */}
+      {chargePort && (
+        <>
+          <circle cx="20" cy="148" r="4" fill="#e1314a" stroke="white" strokeWidth="1"/>
+          <text x="20" y="151" textAnchor="middle" fontSize="6" fontWeight="700" fill="white">⚡</text>
+        </>
+      )}
+    </svg>
   );
 }
 

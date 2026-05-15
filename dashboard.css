@@ -374,6 +374,42 @@
 .car-badge.ok     { background: #e7f5ee; color: #2f8f63; border-color: rgba(47,143,99,.25); }
 .car-badge.accent { background: rgba(42,111,219,.12); color: var(--accent); border-color: rgba(42,111,219,.3); }
 
+/* Open-doors alert block — appears only when something's actually open */
+.car-open-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: #fdecea;
+  border: 1px solid rgba(193,67,45,.25);
+  border-radius: 14px;
+}
+.car-open-status svg { flex-shrink: 0; }
+.car-open-labels { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.car-open-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: #c1432d;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.car-open-label {
+  font-size: 13px;
+  color: #c1432d;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.car-open-label::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 99px;
+  background: #e1314a;
+  flex-shrink: 0;
+}
+
 .car-battery {
   display: flex;
   align-items: center;
