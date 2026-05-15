@@ -11,6 +11,40 @@ function HomePage({ navigate }) {
   const cfg  = window.AETHER_CONFIG;
 
   const [now, setNow] = React.useState(new Date());
+  const [editorOpen, setEditorOpen] = React.useState(false);
+
+  // User-pinned scenes from frontend user data, falls back to cfg.scenes
+  const [userScenes, setUserScenes] = React.useState(null);
+  React.useEffect(() => {
+    if (!hass) return;
+    (async () => {
+      try {
+        const r = await hass.callWS({
+          type: "frontend/get_user_data",
+          key:  "aether_home_scenes",
+        });
+        if (Array.isArray(r?.value)) setUserScenes(r.value);
+      } catch {
+        try {
+          const stored = localStorage.getItem("aether_home_scenes");
+          if (stored) setUserScenes(JSON.parse(stored));
+        } catch {}
+      }
+    })();
+  }, [hass]);
+
+  const saveUserScenes = async (next) => {
+    setUserScenes(next);
+    try { localStorage.setItem("aether_home_scenes", JSON.stringify(next)); } catch {}
+    try {
+      await hass?.callWS({
+        type: "frontend/set_user_data",
+        key:  "aether_home_scenes",
+        value: next,
+      });
+    } catch {}
+  };
+
   React.useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
@@ -82,7 +116,9 @@ function HomePage({ navigate }) {
   const weatherUnit   = weather?.attributes?.temperature_unit || "°F";
   const condition     = (weather?.state || "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
-  const scenes = cfg.scenes || [];
+  const scenes = (userScenes && userScenes.length > 0)
+    ? userScenes
+    : (cfg.scenes || []);
   const fireScene = async (s) => {
     if (!hass || !s.target) return;
     try {
@@ -156,16 +192,21 @@ function HomePage({ navigate }) {
       </div>
 
       {/* Scenes */}
-      {scenes.length > 0 && (
-        <div className="h-section">
-          <div className="h-section-head">
-            <h2>Scenes</h2>
+      <div className="h-section">
+        <div className="h-section-head">
+          <h2>Scenes</h2>
+          <button className="h-link" onClick={() => setEditorOpen(true)}>Edit</button>
+        </div>
+        {scenes.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: "var(--ink-3)", fontSize: 13 }}>
+            No scenes pinned. Tap <b>Edit</b> to choose some.
           </div>
+        ) : (
           <div className="scenes">
             {scenes.map(s => (
-              <button key={s.id} className="scene" onClick={() => fireScene(s)}>
-                <div className="icon"><Icon name={s.icon} size={16} /></div>
-                <div className="gradient" style={{ background: s.grad }} />
+              <button key={s.id || s.target} className="scene" onClick={() => fireScene(s)}>
+                <div className="icon"><Icon name={s.icon || "sparkle"} size={16} /></div>
+                <div className="gradient" style={{ background: s.grad || "linear-gradient(135deg, #6aa1d8, #14283f)" }} />
                 <div>
                   <div className="name">{s.name}</div>
                   <div className="meta">{s.meta}</div>
@@ -173,8 +214,8 @@ function HomePage({ navigate }) {
               </button>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Now playing snapshot + House map */}
       <div className="home-row">
@@ -270,6 +311,110 @@ function HomePage({ navigate }) {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      <SceneEditor
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        hass={hass}
+        current={scenes}
+        onSave={saveUserScenes}
+      />
+    </div>
+  );
+}
+
+// Lets the user pick up to 10 scenes from any scene.* entity to show on
+// the Home page. Persisted to HA's user data (synced across devices).
+function SceneEditor({ open, onClose, hass, current, onSave }) {
+  const [selected, setSelected] = React.useState([]);
+  React.useEffect(() => {
+    if (!open) return;
+    setSelected((current || []).map((s) => s.target).filter(Boolean));
+  }, [open, current]);
+
+  if (!open || !hass) return null;
+
+  // All scene.* entities from hass, sorted by friendly name
+  const all = Object.values(hass.states)
+    .filter((s) => s.entity_id.startsWith("scene."))
+    .map((s) => ({
+      id: s.entity_id,
+      name: s.attributes.friendly_name || s.entity_id.replace("scene.", "").replace(/_/g, " "),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Group scenes by their room/object_id prefix for easier scanning
+  const groups = {};
+  for (const sc of all) {
+    const parts = sc.id.replace("scene.", "").split("_");
+    const prefix = parts.length > 2 ? parts.slice(0, parts.length - 1).join("_") : (parts[0] || "Other");
+    const key = prefix.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    (groups[key] = groups[key] || []).push(sc);
+  }
+
+  const toggle = (id) => {
+    if (selected.includes(id)) setSelected(selected.filter((x) => x !== id));
+    else if (selected.length < 10) setSelected([...selected, id]);
+  };
+
+  const save = () => {
+    // Preserve any user-tuned name/meta/icon/grad on already-pinned scenes;
+    // for newly added ones, derive a name from the entity friendly_name.
+    const next = selected.map((id) => {
+      const prev = (current || []).find((s) => s.target === id);
+      if (prev) return prev;
+      const name = all.find((s) => s.id === id)?.name || id;
+      return {
+        id, target: id,
+        service: "scene.turn_on",
+        name: name.split(" ").slice(0, 3).map((w) => w[0].toUpperCase() + w.slice(1)).join(" "),
+        meta: name,
+        icon: "sparkle",
+        grad: "linear-gradient(135deg, #6aa1d8, #14283f)",
+      };
+    });
+    onSave(next);
+    onClose();
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Edit home scenes <span style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 400, marginLeft: 8 }}>{selected.length} / 10</span></h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body">
+          {Object.keys(groups).sort().map((g) => (
+            <div key={g} style={{ marginBottom: 18 }}>
+              <div style={{
+                fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em",
+                color: "var(--ink-3)", fontWeight: 600, marginBottom: 8,
+              }}>{g}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
+                {groups[g].map((sc) => {
+                  const on = selected.includes(sc.id);
+                  return (
+                    <label
+                      key={sc.id}
+                      className={"scene-pick" + (on ? " on" : "")}
+                      onClick={(e) => { e.preventDefault(); toggle(sc.id); }}
+                    >
+                      <span className={"scene-pick-check" + (on ? " on" : "")}>
+                        {on ? "✓" : ""}
+                      </span>
+                      <span className="scene-pick-name">{sc.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="modal-foot">
+          <button className="modal-btn" onClick={onClose}>Cancel</button>
+          <button className="modal-btn primary" onClick={save}>Save</button>
         </div>
       </div>
     </div>

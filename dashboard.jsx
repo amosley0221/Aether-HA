@@ -10,6 +10,7 @@ function DashboardPage() {
   const cfg  = window.AETHER_CONFIG;
 
   const [filter, setFilter] = React.useState("All");
+  const [openCamera, setOpenCamera] = React.useState(null);
 
   // ─── Live device lists from config + hass state ─────────────────────────
   const lightEntries = React.useMemo(() => {
@@ -349,7 +350,13 @@ function DashboardPage() {
           </div>
           <div className="dash-grid">
             {cameras.map(c => (
-              <div key={c.id} className="tile camera">
+              <div
+                key={c.id}
+                className="tile camera"
+                onClick={() => setOpenCamera(c)}
+                role="button"
+                title={`Open ${c.name}`}
+              >
                 <div
                   className="feed"
                   style={{
@@ -366,7 +373,11 @@ function DashboardPage() {
                 </div>
                 <div className="cam-foot">
                   <div className="cam-meta">{c.id.split(".")[1]}</div>
-                  <button style={{ color: "white", opacity: .8 }}>
+                  <button
+                    style={{ color: "white", opacity: .8 }}
+                    onClick={(e) => { e.stopPropagation(); setOpenCamera(c); }}
+                    aria-label="Expand"
+                  >
                     <Icon name="expand" size={14} />
                   </button>
                 </div>
@@ -375,6 +386,48 @@ function DashboardPage() {
           </div>
         </React.Fragment>
       )}
+      <CameraDialog
+        open={!!openCamera}
+        camera={openCamera}
+        onClose={() => setOpenCamera(null)}
+      />
+    </div>
+  );
+}
+
+// Full-size camera live view. Uses HA's still-image proxy and refreshes it
+// every second — works without any auth tokens since we're already inside
+// the HA frontend session.
+function CameraDialog({ open, camera, onClose }) {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [open]);
+
+  if (!open || !camera) return null;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{camera.name} <span style={{ fontSize: 11, color: "#e1314a", marginLeft: 8, letterSpacing: ".14em" }}>● LIVE</span></h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body" style={{ padding: 0, background: "#0a0a0a" }}>
+          <img
+            src={`${camera.thumb}?t=${tick}`}
+            alt={camera.name}
+            style={{
+              display: "block",
+              width: "100%",
+              maxHeight: "70vh",
+              objectFit: "contain",
+              background: "#0a0a0a",
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

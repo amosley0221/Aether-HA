@@ -207,6 +207,34 @@
 .status-tile .t { font-size: 13px; color: var(--ink-3); }
 .status-tile .v { font-size: 16px; font-weight: 500; }
 
+/* Scene editor picker rows */
+.scene-pick {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.scene-pick:hover { background: var(--paper-2); }
+.scene-pick.on   { background: rgba(42,111,219,.08); border-color: rgba(42,111,219,.25); }
+.scene-pick-check {
+  width: 20px; height: 20px; flex-shrink: 0;
+  border-radius: 6px;
+  border: 1.5px solid var(--hairline);
+  display: grid; place-items: center;
+  font-size: 12px; color: white;
+  background: white;
+  transition: background .12s, border-color .12s;
+}
+.scene-pick-check.on { background: var(--accent); border-color: var(--accent); }
+.scene-pick-name {
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ─── Mobile overrides ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .home { padding: 0 14px 32px; gap: 14px; }

@@ -140,6 +140,7 @@
   min-height: 200px;
   background: #1a1a1a;
   color: white;
+  cursor: pointer;
 }
 .tile.camera .feed {
   position: absolute; inset: 0;
