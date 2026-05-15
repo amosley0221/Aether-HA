@@ -608,6 +608,18 @@ function usePins(hassRef) {
   const [pins, setPins]     = React.useState([]);
   const [loaded, setLoaded] = React.useState(false);
 
+  // Migrate legacy pin entries that were saved before can_expand / can_play
+  // were tracked. Albums and artists were always expandable, so the safe
+  // default is true on both — that lets tapping a pre-existing pin drill in
+  // (previously enter() bailed because can_expand was undefined).
+  const migratePin = (p) => ({
+    can_expand: true,
+    can_play:   true,
+    thumbnail:  p.thumbnail || p.image,
+    image:      p.image     || p.thumbnail,
+    ...p,
+  });
+
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -626,7 +638,7 @@ function usePins(hassRef) {
         } catch {}
       }
       if (!cancelled) {
-        setPins(Array.isArray(initial) ? initial : []);
+        setPins(Array.isArray(initial) ? initial.map(migratePin) : []);
         setLoaded(true);
       }
     })();

@@ -79,26 +79,45 @@ function DashboardPage() {
     };
   }).filter(c => c.entity);
 
-  // Camera tiles use HA's authenticated entity_picture URL (which already
-  // contains a fresh token). We bump our own tick every 5 minutes so the
-  // thumb image refreshes without needing the camera state to update.
-  const [tileTick, setTileTick] = React.useState(0);
+  // Camera thumbnails use HA's auth/sign_path WS call to get a fresh
+  // signed URL for /api/camera_proxy/<entity_id>. Plain camera_proxy URLs
+  // (or even entity_picture's signed token) can fail inside the panel
+  // depending on integration version, so signing per-load is the
+  // most reliable approach. Re-sign every minute for tiles.
+  const [signedUrls, setSignedUrls] = React.useState({});
   React.useEffect(() => {
-    const id = setInterval(() => setTileTick((t) => t + 1), 5 * 60 * 1000);
-    return () => clearInterval(id);
-  }, []);
+    if (!hass) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const next = {};
+      for (const id of (cfg.cameras || [])) {
+        try {
+          const r = await hass.callWS({
+            type: "auth/sign_path",
+            path: `/api/camera_proxy/${id}`,
+            expires: 120,
+          });
+          if (r?.path) next[id] = r.path;
+        } catch (_) { /* fall back to entity_picture or unsigned */ }
+      }
+      if (!cancelled) setSignedUrls(next);
+    };
+    refresh();
+    const tickerId = setInterval(refresh, 60 * 1000);
+    return () => { cancelled = true; clearInterval(tickerId); };
+  }, [hass, JSON.stringify(cfg.cameras || [])]);
 
   const cameras = (cfg.cameras || []).map(id => {
     const s = hass?.states?.[id];
     const a = s?.attributes || {};
-    const base = a.entity_picture || `/api/camera_proxy/${id}`;
-    const sep  = base.includes("?") ? "&" : "?";
+    const signed = signedUrls[id];
+    const fallback = a.entity_picture || `/api/camera_proxy/${id}`;
     return {
       id, entity: s,
       name: a.friendly_name || id.split(".")[1].replace(/_/g, " "),
-      thumb: `${base}${sep}_t=${tileTick}`,
-      // Re-derive `entity_picture` for the modal to bump independently
-      entityPicture: a.entity_picture,
+      thumb:    signed || fallback,
+      // Raw API path for the modal to sign with its own faster ticker
+      proxyPath: `/api/camera_proxy/${id}`,
     };
   }).filter(c => c.entity);
 
@@ -399,27 +418,47 @@ function DashboardPage() {
       <CameraDialog
         open={!!openCamera}
         camera={openCamera}
+        hass={hass}
         onClose={() => setOpenCamera(null)}
       />
     </div>
   );
 }
 
-// Full-size camera live view. Uses HA's authenticated entity_picture URL and
-// busts cache every second so we get fresh frames. Falls back to the plain
-// camera_proxy URL if entity_picture isn't exposed.
-function CameraDialog({ open, camera, onClose }) {
-  const [tick, setTick] = React.useState(0);
+// Full-size camera live view. Re-signs the camera_proxy path every 2 seconds
+// so each requested image carries a valid auth signature. Falls back to the
+// entity_picture URL if auth/sign_path is unavailable.
+function CameraDialog({ open, camera, hass, onClose }) {
+  const [src, setSrc] = React.useState("");
+
   React.useEffect(() => {
-    if (!open) return;
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, [open]);
+    if (!open || !camera || !hass) return;
+    let cancelled = false;
+    const sign = async () => {
+      try {
+        const r = await hass.callWS({
+          type: "auth/sign_path",
+          path: camera.proxyPath || `/api/camera_proxy/${camera.id}`,
+          expires: 30,
+        });
+        if (!cancelled && r?.path) {
+          // Append a bust param so the <img> actually re-fetches when the
+          // signed path itself happens to be unchanged within the window.
+          setSrc(r.path + (r.path.includes("?") ? "&" : "?") + "_t=" + Date.now());
+        }
+      } catch {
+        if (!cancelled) {
+          const base = camera.thumb || `/api/camera_proxy/${camera.id}`;
+          setSrc(base + (base.includes("?") ? "&" : "?") + "_t=" + Date.now());
+        }
+      }
+    };
+    sign();
+    const id = setInterval(sign, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [open, camera, hass]);
 
   if (!open || !camera) return null;
-  const base = camera.entityPicture || `/api/camera_proxy/${camera.id}`;
-  const sep  = base.includes("?") ? "&" : "?";
-  const src  = `${base}${sep}_t=${tick}`;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -432,17 +471,26 @@ function CameraDialog({ open, camera, onClose }) {
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body" style={{ padding: 0, background: "#0a0a0a" }}>
-          <img
-            src={src}
-            alt={camera.name}
-            style={{
-              display: "block",
-              width: "100%",
-              maxHeight: "70vh",
-              objectFit: "contain",
-              background: "#0a0a0a",
-            }}
-          />
+          {src ? (
+            <img
+              src={src}
+              alt={camera.name}
+              style={{
+                display: "block",
+                width: "100%",
+                maxHeight: "70vh",
+                objectFit: "contain",
+                background: "#0a0a0a",
+              }}
+            />
+          ) : (
+            <div style={{
+              minHeight: 360, display: "grid", placeItems: "center",
+              color: "#777", background: "#0a0a0a",
+            }}>
+              Loading stream…
+            </div>
+          )}
         </div>
       </div>
     </div>
