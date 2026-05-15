@@ -15,7 +15,11 @@ function App() {
     <div className="app-shell">
       <header className="brandbar">
         <div className="brand-mark">Æ</div>
-        <div className="brand-name"><b>Aether</b><span>·</span>Home</div>
+        <div className="brand-name">
+          <b>Aether</b>
+          <span className="brand-sep"> · </span>
+          <span className="brand-page">{page.charAt(0).toUpperCase() + page.slice(1)}</span>
+        </div>
         <nav className="nav-tabs">
           <button className={"nav-tab" + (page === "home"      ? " active" : "")} onClick={() => navigate("home")}>     <Icon name="home"/>  Home</button>
           <button className={"nav-tab" + (page === "music"     ? " active" : "")} onClick={() => navigate("music")}>    <Icon name="music"/> Music</button>

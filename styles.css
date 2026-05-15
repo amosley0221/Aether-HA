@@ -196,3 +196,23 @@ input { font: inherit; color: inherit; }
   outline-offset: 4px;
   border-radius: 999px;
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Mobile (phone) — viewport ≤ 720px
+   The brandbar's status pills and avatar are hidden to leave room for
+   the nav tabs; the brand name collapses to just "Aether". Page padding
+   shrinks. Grids collapse to fewer columns. Page-specific overrides
+   live in home.css / music.css / dashboard.css.
+─────────────────────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .brandbar {
+    padding: 10px 14px;
+    gap: 8px;
+  }
+  .brand-name { display: none; } /* Æ logo carries the brand on phone */
+  .brand-pill { display: none; }
+  .brand-avatar { width: 28px; height: 28px; font-size: 11px; }
+  .nav-tabs { margin-left: 4px; }
+  .nav-tab { padding: 6px 11px; font-size: 12px; }
+  .nav-tab svg { width: 12px; height: 12px; }
+}

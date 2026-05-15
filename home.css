@@ -206,3 +206,39 @@
 .status-tile .ic.warn  { background: #fdf2dd; color: #a47214; }
 .status-tile .t { font-size: 13px; color: var(--ink-3); }
 .status-tile .v { font-size: 16px; font-weight: 500; }
+
+/* ─── Mobile overrides ─────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .home { padding: 0 14px 32px; gap: 14px; }
+  .hero { padding: 22px 18px 20px; border-radius: 22px; }
+  .hero-grid { gap: 18px; }
+  .hero-greet {
+    font-size: 36px;
+    line-height: 1.05;
+    margin: 8px 0 4px;
+    letter-spacing: -.025em;
+  }
+  .hero-sub { font-size: 14px; }
+  .hero-stats { padding: 14px; gap: 10px; border-radius: 16px; }
+  .stat-cell .val { font-size: 20px; }
+  .stat-cell .val .unit { font-size: 11px; }
+  .stat-cell .lbl { font-size: 10px; }
+  .stat-cell .meta { font-size: 11px; }
+
+  .scenes { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .scene { padding: 14px; min-height: 110px; }
+  .scene .name { font-size: 15px; }
+  .scene .gradient { width: 70px; height: 70px; right: -18px; top: -18px; }
+
+  .home-row { grid-template-columns: 1fr; gap: 14px; }
+  .now-mini { padding: 18px; min-height: 180px; border-radius: 18px; }
+  .now-mini .track { font-size: 22px; }
+  .house-card { padding: 18px; }
+
+  .status-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .status-tile { padding: 12px; gap: 10px; }
+  .status-tile .ic { width: 32px; height: 32px; }
+  .status-tile .v { font-size: 14px; }
+
+  .h-section-head h2 { font-size: 16px; }
+}
