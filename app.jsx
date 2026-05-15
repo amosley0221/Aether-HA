@@ -223,31 +223,94 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
     setSending(false);
   };
 
-  // ─── Text-to-speech: read a string aloud via Web Speech Synthesis ─────
-  const speak = React.useCallback((text) => {
-    if (!speakReplies || !text || typeof window.speechSynthesis === "undefined") return;
-    try {
-      window.speechSynthesis.cancel(); // stop anything currently speaking
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang  = voiceCfg.language || "en-US";
-      u.rate  = voiceCfg.rate  ?? 1.0;
-      u.pitch = voiceCfg.pitch ?? 1.0;
-      const pref = voiceCfg.preferredVoice;
-      const voices = window.speechSynthesis.getVoices();
-      const match = pref && voices.find((v) =>
-        v.name.toLowerCase().includes(pref.toLowerCase())
-      );
-      if (match) u.voice = match;
-      else {
-        const enVoice = voices.find((v) => v.lang?.startsWith(u.lang.slice(0, 2))
-          && (v.name.includes("Google") || v.name.includes("Samantha") || v.name.includes("Daniel") || v.default));
-        if (enVoice) u.voice = enVoice;
+  // ─── Text-to-speech: try browser SpeechSynthesis, fall back to HA TTS ─
+  const speak = React.useCallback(async (text) => {
+    if (!speakReplies || !text) return;
+    console.log("[aether] speak:", text.slice(0, 80));
+
+    const tryBrowserTTS = () => new Promise((resolve) => {
+      if (typeof window.speechSynthesis === "undefined") {
+        console.warn("[aether] speechSynthesis not available");
+        return resolve(false);
       }
-      window.speechSynthesis.speak(u);
-    } catch (e) {
-      console.warn("[aether] TTS failed:", e);
+
+      const doSpeak = () => {
+        try {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(text);
+          u.lang  = voiceCfg.language || "en-US";
+          u.rate  = voiceCfg.rate  ?? 1.0;
+          u.pitch = voiceCfg.pitch ?? 1.0;
+          const voices = window.speechSynthesis.getVoices();
+          const pref = voiceCfg.preferredVoice;
+          const match = pref && voices.find((v) =>
+            v.name.toLowerCase().includes(pref.toLowerCase()));
+          if (match) u.voice = match;
+          else {
+            const enVoice = voices.find((v) => v.lang?.startsWith(u.lang.slice(0, 2))
+              && (v.name.includes("Google") || v.name.includes("Samantha")
+                  || v.name.includes("Daniel") || v.default));
+            if (enVoice) u.voice = enVoice;
+          }
+          let started = false;
+          u.onstart = () => { started = true; console.log("[aether] browser TTS started, voice:", u.voice?.name || "default"); resolve(true); };
+          u.onend   = () => console.log("[aether] browser TTS finished");
+          u.onerror = (e) => { console.warn("[aether] browser TTS error:", e.error); if (!started) resolve(false); };
+          window.speechSynthesis.speak(u);
+          // If onstart doesn't fire within 1.2s, assume the browser silently failed
+          setTimeout(() => { if (!started) resolve(false); }, 1200);
+        } catch (e) {
+          console.warn("[aether] browser TTS exception:", e);
+          resolve(false);
+        }
+      };
+
+      // Voices may load asynchronously on first call — wait for them
+      if (window.speechSynthesis.getVoices().length === 0) {
+        console.log("[aether] voice list empty, waiting for voiceschanged…");
+        window.speechSynthesis.addEventListener("voiceschanged", doSpeak, { once: true });
+        setTimeout(doSpeak, 300); // belt-and-suspenders if event never fires
+      } else {
+        doSpeak();
+      }
+    });
+
+    const tryHATTS = async () => {
+      const mp  = voiceCfg.ttsMediaPlayer;
+      const svc = voiceCfg.ttsService;
+      if (!mp || !hass) {
+        console.log("[aether] HA TTS not configured (need voice.ttsMediaPlayer + voice.ttsService)");
+        return false;
+      }
+      try {
+        if (svc) {
+          // Modern unified TTS service: tts.speak with service entity_id
+          await hass.callService("tts", "speak", {
+            entity_id: svc,
+            media_player_entity_id: mp,
+            message: text,
+          });
+        } else {
+          // Legacy fallback: tts.google_translate_say
+          await hass.callService("tts", "google_translate_say", {
+            entity_id: mp,
+            message: text,
+          });
+        }
+        console.log("[aether] HA TTS sent via", svc || "tts.google_translate_say", "→", mp);
+        return true;
+      } catch (e) {
+        console.warn("[aether] HA TTS failed:", e?.message || e);
+        return false;
+      }
+    };
+
+    const browserOK = await tryBrowserTTS();
+    if (!browserOK) {
+      console.log("[aether] browser TTS failed/unavailable — trying HA TTS fallback");
+      await tryHATTS();
     }
-  }, [speakReplies, voiceCfg]);
+  }, [speakReplies, voiceCfg, hass]);
 
   // ─── Speech-to-text: tap-to-talk button. Captures speech, fills the
   // input as interim text, and auto-sends when done. ───────────────────
@@ -399,7 +462,7 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
             >
               {listening
                 ? <span className="chat-mic-pulse" />
-                : <Icon name="motion" size={16} />}
+                : <Icon name="mic" size={16} />}
             </button>
           )}
           <button

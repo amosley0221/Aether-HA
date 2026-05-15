@@ -37,6 +37,16 @@ const AETHER_CONFIG = {
     // Preferred TTS voice name fragment (e.g. "Google", "Samantha",
     // "Daniel"). If null, the system default is used.
     preferredVoice:  null,
+
+    // HA-side TTS fallback. Android WebView's Web Speech Synthesis is
+    // unreliable; if it fails (no voices, autoplay-blocked, no engine),
+    // Aether will fall back to calling HA's tts.speak service which
+    // routes the audio through your chosen media_player (e.g. the
+    // Pixel Tablet's own Cast endpoint or a Sonos speaker). Requires
+    // any TTS integration installed in HA (Google Translate is the
+    // default builtin one; Piper, OpenAI, ElevenLabs etc. also work).
+    ttsMediaPlayer:  "media_player.pixel_tablet",  // play TTS here
+    ttsService:      "tts.google_translate_en_com", // entity_id of the TTS service
   },
 
   // mediaPlayer  = control entity (Music Assistant wrapper, supports
