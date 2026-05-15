@@ -601,58 +601,81 @@ function HiddenManagerDialog({ open, onClose, hidden, hass, showDevice, showSect
   );
 }
 
-// Full-size camera live view. To get a fresh frame we sign a fresh path
-// every ~1.5 s with a unique time query (`?time=<ms>`), so each request
-// hits the server with a distinct signed URL. Appending bust params
-// AFTER signing breaks HA's path signature — the time must be in the
-// path that gets signed.
-//
-// The modal also has to fight HA's nested shadow DOM, where position:
-// fixed sometimes collapses to absolute (because an ancestor has a
-// transform/filter creating a new containing block). We capture the
-// scrolling panel's scrollTop on open and use it as the backdrop's
-// top so the modal lands in the viewport the user clicked from.
+// Full-size camera live view. Tries to play actual video:
+//   1. Request an HLS stream URL from HA via camera/stream WS command
+//   2. Sign it via auth/sign_path
+//   3. Render in <video> — iOS Safari supports HLS natively, Chrome on
+//      Android plays it via native HLS support on most newer devices.
+// If HLS isn't available for the camera (some integrations don't expose
+// a stream), fall back to the signed still-image refresh approach.
 function CameraDialog({ open, camera, hass, onClose }) {
-  const [signedUrl, setSignedUrl] = React.useState("");
-  const scrollTop = useModalAnchor(open);
+  const [hlsUrl, setHlsUrl]     = React.useState("");
+  const [stillUrl, setStillUrl] = React.useState("");
+  const [mode, setMode]         = React.useState("loading"); // loading | hls | still
+  const scrollTop               = useModalAnchor(open);
 
+  // Try HLS first
   React.useEffect(() => {
     if (!open || !camera || !hass) return;
     let cancelled = false;
+    setMode("loading");
+    setHlsUrl("");
+    setStillUrl("");
+    (async () => {
+      try {
+        const r = await hass.callWS({
+          type: "camera/stream",
+          entity_id: camera.id,
+        });
+        if (cancelled) return;
+        if (r?.url) {
+          // The returned url is already relative (/api/hls/...). Sign it so
+          // the browser request carries an auth token in the query string.
+          let final = r.url;
+          try {
+            const signed = await hass.callWS({
+              type: "auth/sign_path",
+              path: r.url,
+              expires: 600,
+            });
+            if (signed?.path) final = signed.path;
+          } catch {}
+          if (!cancelled) {
+            setHlsUrl(final);
+            setMode("hls");
+          }
+          return;
+        }
+      } catch (_) { /* camera/stream not available or camera has no stream */ }
+      if (!cancelled) setMode("still");
+    })();
+    return () => { cancelled = true; };
+  }, [open, camera, hass]);
+
+  // Still-image fallback (signed JPEG refreshed every 1.5s)
+  React.useEffect(() => {
+    if (mode !== "still" || !open || !camera || !hass) return;
+    let cancelled = false;
     const sign = async () => {
       const base = camera.proxyPath || `/api/camera_proxy/${camera.id}`;
-      // Try sign-with-time first; if that fails (some HA versions reject
-      // extra query params), fall back to the bare path.
       for (const path of [`${base}?time=${Date.now()}`, base]) {
         try {
           const r = await hass.callWS({
-            type: "auth/sign_path",
-            path,
-            expires: 60,
+            type: "auth/sign_path", path, expires: 60,
           });
-          if (!cancelled && r?.path) {
-            setSignedUrl(r.path);
-            return;
-          }
-        } catch (_) { /* try next */ }
-      }
-      if (!cancelled) {
-        setSignedUrl(camera.thumb || `/api/camera_proxy/${camera.id}`);
+          if (!cancelled && r?.path) { setStillUrl(r.path); return; }
+        } catch {}
       }
     };
     sign();
     const id = setInterval(sign, 1500);
     return () => { cancelled = true; clearInterval(id); };
-  }, [open, camera, hass]);
+  }, [mode, open, camera, hass]);
 
   if (!open || !camera) return null;
 
   return (
-    <div
-      className="modal-backdrop"
-      onClick={onClose}
-      style={{ top: scrollTop }}
-    >
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>
@@ -662,25 +685,48 @@ function CameraDialog({ open, camera, hass, onClose }) {
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body" style={{ padding: 0, background: "#0a0a0a" }}>
-          <div
-            style={{
-              width: "100%",
-              minHeight: 320,
-              maxHeight: "70vh",
-              height: "55vh",
-              backgroundImage: signedUrl ? `url('${signedUrl}')` : "none",
-              backgroundColor: "#0a0a0a",
-              backgroundSize: "contain",
-              backgroundRepeat: "no-repeat",
-              backgroundPosition: "center",
-              display: signedUrl ? "block" : "grid",
-              placeItems: "center",
-              color: "#777",
-              fontSize: 13,
-            }}
-          >
-            {!signedUrl && "Loading stream…"}
-          </div>
+          {mode === "hls" && hlsUrl ? (
+            <video
+              key={hlsUrl}
+              src={hlsUrl}
+              autoPlay
+              muted
+              playsInline
+              controls
+              style={{
+                display: "block",
+                width: "100%",
+                maxHeight: "70vh",
+                height: "55vh",
+                background: "#0a0a0a",
+                objectFit: "contain",
+              }}
+            />
+          ) : mode === "still" && stillUrl ? (
+            <div
+              style={{
+                width: "100%",
+                minHeight: 320,
+                maxHeight: "70vh",
+                height: "55vh",
+                backgroundImage: `url('${stillUrl}')`,
+                backgroundColor: "#0a0a0a",
+                backgroundSize: "contain",
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "center",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                minHeight: 320, height: "55vh",
+                display: "grid", placeItems: "center",
+                color: "#777", fontSize: 13, background: "#0a0a0a",
+              }}
+            >
+              Loading stream…
+            </div>
+          )}
         </div>
       </div>
     </div>

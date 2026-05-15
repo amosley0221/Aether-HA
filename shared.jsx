@@ -151,21 +151,45 @@ const callService = async (hass, svc, data = {}) => {
 const entityName = (st, fallback) =>
   st?.attributes?.friendly_name || fallback || st?.entity_id || "";
 
-// Captures the aether-panel's scrollTop the moment a modal opens, so the
-// backdrop can be positioned at the user's current viewport position.
-// Without this, modals inside HA's nested shadow DOM sometimes anchor at
-// panel y=0 (off-screen if the user scrolled down). Also locks scroll on
-// the panel while open so the modal can't drift out of view.
+// Captures the actual scrolling ancestor's scrollTop the moment a modal
+// opens, so the backdrop can be positioned at the user's current viewport
+// position. Walks up from aether-panel through shadow roots looking for an
+// element with overflow:auto/scroll that's actually scrolled — necessary
+// because HA's panel wrappers (not aether-panel itself) are sometimes
+// the real scroll container. Also locks scroll on that ancestor while
+// open so the modal can't drift.
 const useModalAnchor = (open) => {
   const [top, setTop] = React.useState(0);
   React.useEffect(() => {
     if (!open) return;
-    const panel = document.querySelector("aether-panel");
-    setTop(panel?.scrollTop || window.scrollY || 0);
-    if (panel) {
-      const prev = panel.style.overflow;
-      panel.style.overflow = "hidden";
-      return () => { panel.style.overflow = prev; };
+
+    const findScroller = () => {
+      let el = document.querySelector("aether-panel");
+      while (el && el !== document.body) {
+        try {
+          const cs = window.getComputedStyle(el);
+          if ((cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+              el.scrollHeight > el.clientHeight + 1) {
+            return el;
+          }
+        } catch {}
+        // Climb out of shadow roots when needed
+        el = el.parentElement
+          || (el.parentNode && el.parentNode.host)
+          || (el.getRootNode && el.getRootNode().host)
+          || null;
+      }
+      return document.scrollingElement || document.documentElement;
+    };
+
+    const scroller = findScroller();
+    const t = scroller?.scrollTop || window.scrollY || 0;
+    setTop(t);
+
+    if (scroller && scroller.style) {
+      const prev = scroller.style.overflow;
+      scroller.style.overflow = "hidden";
+      return () => { scroller.style.overflow = prev; };
     }
   }, [open]);
   return top;
