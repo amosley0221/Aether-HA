@@ -76,6 +76,17 @@
         if (!window.ReactDOM) await loadScript("https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js");
         if (!window.Babel)    await loadScript("https://unpkg.com/@babel/standalone@7.29.0/babel.min.js");
 
+        // Google's <model-viewer> custom element for embedded GLB/GLTF
+        // models. Loaded once per panel mount; tagged so we don't
+        // re-add on re-renders. Loads asynchronously and is fault-
+        // tolerant — the Car section falls back to its SVG if absent.
+        if (!customElements.get("model-viewer")) {
+          const mv = document.createElement("script");
+          mv.type = "module";
+          mv.src = "https://unpkg.com/@google/model-viewer@4.0.0/dist/model-viewer.min.js";
+          document.head.appendChild(mv);
+        }
+
         await loadJsx(`${BASE}/aether-config.js${bust}`);
         await loadJsx(`${BASE}/shared.jsx${bust}`);
         await loadJsx(`${BASE}/home.jsx${bust}`);

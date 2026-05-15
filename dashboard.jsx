@@ -814,10 +814,26 @@ function CarSection({ car, hass, editMode, onHideSection }) {
 
       <div className="car-card">
         <div className="car-card-image">
-          {car.image
-            ? <img src={car.image} alt={`${car.year} ${car.model}`} />
-            : <TeslaModel3SVG />
-          }
+          {car.model3d ? (
+            React.createElement("model-viewer", {
+              src: car.model3d,
+              alt: `${car.year} ${car.model}`,
+              "auto-rotate": "",
+              "auto-rotate-delay": "1500",
+              "rotation-per-second": "18deg",
+              "camera-controls": "",
+              "touch-action": "pan-y",
+              "interaction-prompt": "none",
+              "shadow-intensity": "1",
+              "exposure": "1.0",
+              "environment-image": "neutral",
+              style: { width: "100%", height: "100%", minHeight: 240, "--poster-color": "transparent" },
+            })
+          ) : car.image ? (
+            <img src={car.image} alt={`${car.year} ${car.model}`} />
+          ) : (
+            <TeslaModel3SVG />
+          )}
         </div>
 
         <div className="car-card-body">

@@ -141,16 +141,24 @@ const AETHER_CONFIG = {
 
   weather: "weather.forecast_home",
 
-  // Car / Tesla integration. Set image: "/local/aether/tesla.png" (or any
-  // hosted URL) to override the built-in SVG with a real photo. Drop the
-  // file in /config/www/aether/ and it's served at that path.
+  // Car / Tesla integration. Three visualization options, in priority:
+  //   model3d  → <model-viewer> renders a real interactive 3D GLB/GLTF
+  //              (rotatable, accurate). Drop a Tesla Model 3 .glb into
+  //              /config/www/aether/ and set the path here. Good free
+  //              sources: Sketchfab (search 'Tesla Model 3' filtered to
+  //              Downloadable + Free), CGTrader, Free3D. Export as
+  //              .glb / .gltf 2.0.
+  //   image    → a static image (PNG/JPG/SVG/WebP). Same /local/aether/
+  //              path convention. Quick + no library overhead.
+  //   neither  → built-in side-profile SVG illustration.
   car: {
     name: "Tone",
     year: "2020",
     model: "Model 3",
     color: "White",
     wheels: '19" Silver Sport',
-    image: null,                          // null → render the built-in SVG
+    model3d: null,                        // e.g. "/local/aether/tesla.glb"
+    image:   null,                        // e.g. "/local/aether/tesla.png"
     entities: {
       lock:                  "lock.tone_lock",
       chargeCableLock:       "lock.tone_charge_cable_lock",
