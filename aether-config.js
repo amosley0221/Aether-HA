@@ -20,6 +20,25 @@ const AETHER_CONFIG = {
   // (Listen Now pins live in HA's per-user storage now — see the bookmark
   // button on each album tile in the music page.)
 
+  // Voice features for the AI chat. Web Speech API is used for STT/TTS,
+  // so this works on most modern browsers + Android WebView. Fully Kiosk
+  // PLUS needs microphone permission granted via Settings → Web Browsing.
+  voice: {
+    enabled:         true,             // master toggle for any voice
+    speakResponses:  true,             // read AI replies aloud
+    language:        "en-US",          // STT + TTS locale
+    rate:            1.0,              // TTS playback speed (0.5–2.0)
+    pitch:           1.0,              // TTS pitch (0–2)
+    // Wake word: when set, the tablet listens continuously and opens the
+    // chat + starts voice input the moment it hears this phrase. Leave
+    // null to require a button tap. Phrases work better than single
+    // words — Web Speech tends to mis-fire on short triggers.
+    wakeWord:        null,             // e.g. "hey aether" or "hey jarvis"
+    // Preferred TTS voice name fragment (e.g. "Google", "Samantha",
+    // "Daniel"). If null, the system default is used.
+    preferredVoice:  null,
+  },
+
   // mediaPlayer  = control entity (Music Assistant wrapper, supports
   //                search_media and routes Apple Music/Spotify/etc).
   // displayPlayer = read-only state mirror (Sonos integration entity).

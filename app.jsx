@@ -6,7 +6,51 @@ function App() {
   const hass = useHass();
   const [page, setPage] = React.useState("home");
   const [chatOpen, setChatOpen] = React.useState(false);
+  const [chatAutoListen, setChatAutoListen] = React.useState(false);
   const navigate = (p) => setPage(p);
+
+  // Wake-word listener (if configured). Runs continuously when enabled,
+  // opens the chat + activates the mic when the configured phrase is
+  // heard. Mounted at the App level so it works even when the chat is
+  // closed.
+  const wakeWord = window.AETHER_CONFIG?.voice?.wakeWord;
+  const voiceEnabled = window.AETHER_CONFIG?.voice?.enabled !== false;
+  React.useEffect(() => {
+    if (!voiceEnabled || !wakeWord || chatOpen) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.lang = window.AETHER_CONFIG?.voice?.language || "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    let stopped = false;
+    const wake = wakeWord.toLowerCase().trim();
+
+    recognition.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const transcript = e.results[i][0]?.transcript?.toLowerCase() || "";
+        if (transcript.includes(wake)) {
+          stopped = true;
+          try { recognition.stop(); } catch {}
+          setChatAutoListen(true);
+          setChatOpen(true);
+          return;
+        }
+      }
+    };
+    recognition.onerror = () => { /* silently ignore — restart loop covers it */ };
+    recognition.onend = () => {
+      // Auto-restart while we're still supposed to be listening
+      if (!stopped) {
+        try { recognition.start(); } catch {}
+      }
+    };
+    try { recognition.start(); } catch {}
+    return () => {
+      stopped = true;
+      try { recognition.stop(); } catch {}
+    };
+  }, [voiceEnabled, wakeWord, chatOpen]);
 
   const meshAvail = hass ? Object.values(hass.states).filter(
     s => s.entity_id.startsWith("device_tracker.") && s.state === "home"
@@ -54,8 +98,10 @@ function App() {
           </button>
           <ChatDialog
             open={chatOpen}
-            onClose={() => setChatOpen(false)}
+            onClose={() => { setChatOpen(false); setChatAutoListen(false); }}
             hass={hass}
+            autoListen={chatAutoListen}
+            onAutoListenConsumed={() => setChatAutoListen(false)}
           />
         </>
       )}
@@ -70,15 +116,24 @@ function App() {
 // office?"). If the user configures an LLM agent (OpenAI, Anthropic, Gemini)
 // via the Conversation integration, those plus open-ended chat are handled
 // automatically — same WS endpoint, the user just picks the agent.
-function ChatDialog({ open, onClose, hass }) {
+function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   const [messages, setMessages] = React.useState([]);
   const [input, setInput]       = React.useState("");
   const [sending, setSending]   = React.useState(false);
   const [conversationId, setConversationId] = React.useState(null);
   const [agents, setAgents]     = React.useState([]);
   const [agentId, setAgentId]   = React.useState(null);
-  const scrollRef = React.useRef(null);
+  const [listening, setListening] = React.useState(false);
+  const [interim, setInterim]   = React.useState("");
+  const scrollRef     = React.useRef(null);
+  const recognitionRef = React.useRef(null);
   const scrollTop = useModalAnchor(open);
+
+  const voiceCfg     = window.AETHER_CONFIG?.voice || {};
+  const voiceEnabled = voiceCfg.enabled !== false;
+  const speakReplies = voiceEnabled && voiceCfg.speakResponses !== false;
+  const sttSupported = typeof window !== "undefined" &&
+                       !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   // Load available conversation agents (Home Assistant + any LLM ones the
   // user has configured) so we can let them pick. Auto-prefers an LLM
@@ -138,10 +193,11 @@ function ChatDialog({ open, onClose, hass }) {
     }
   }, [messages, sending]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (override) => {
+    const text = (override ?? input).trim();
     if (!text || sending) return;
     setInput("");
+    setInterim("");
     setMessages((m) => [...m, { role: "user", text }]);
     setSending(true);
     try {
@@ -158,19 +214,105 @@ function ChatDialog({ open, onClose, hass }) {
         ? (r?.response?.data?.code || "error") : null;
       setMessages((m) => [...m, { role: "assistant", text: speech, error: !!errType }]);
       if (r?.conversation_id) setConversationId(r.conversation_id);
+      // Speak the assistant's reply aloud
+      if (speakReplies && !errType) speak(speech);
     } catch (err) {
-      setMessages((m) => [...m, {
-        role: "assistant",
-        text: "Error: " + (err?.message || String(err)),
-        error: true,
-      }]);
+      const msg = "Error: " + (err?.message || String(err));
+      setMessages((m) => [...m, { role: "assistant", text: msg, error: true }]);
     }
     setSending(false);
   };
 
+  // ─── Text-to-speech: read a string aloud via Web Speech Synthesis ─────
+  const speak = React.useCallback((text) => {
+    if (!speakReplies || !text || typeof window.speechSynthesis === "undefined") return;
+    try {
+      window.speechSynthesis.cancel(); // stop anything currently speaking
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang  = voiceCfg.language || "en-US";
+      u.rate  = voiceCfg.rate  ?? 1.0;
+      u.pitch = voiceCfg.pitch ?? 1.0;
+      const pref = voiceCfg.preferredVoice;
+      const voices = window.speechSynthesis.getVoices();
+      const match = pref && voices.find((v) =>
+        v.name.toLowerCase().includes(pref.toLowerCase())
+      );
+      if (match) u.voice = match;
+      else {
+        const enVoice = voices.find((v) => v.lang?.startsWith(u.lang.slice(0, 2))
+          && (v.name.includes("Google") || v.name.includes("Samantha") || v.name.includes("Daniel") || v.default));
+        if (enVoice) u.voice = enVoice;
+      }
+      window.speechSynthesis.speak(u);
+    } catch (e) {
+      console.warn("[aether] TTS failed:", e);
+    }
+  }, [speakReplies, voiceCfg]);
+
+  // ─── Speech-to-text: tap-to-talk button. Captures speech, fills the
+  // input as interim text, and auto-sends when done. ───────────────────
+  const stopListening = React.useCallback(() => {
+    const r = recognitionRef.current;
+    if (r) {
+      try { r.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+    setListening(false);
+  }, []);
+
+  const startListening = React.useCallback(() => {
+    if (!sttSupported || listening) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SR();
+    recognition.lang = voiceCfg.language || "en-US";
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
+    let finalText = "";
+
+    recognition.onresult = (e) => {
+      let interimText = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0]?.transcript || "";
+        if (e.results[i].isFinal) finalText += t;
+        else interimText += t;
+      }
+      setInterim(interimText);
+      if (finalText) setInput(finalText);
+    };
+    recognition.onerror = (e) => {
+      console.warn("[aether] STT error:", e.error);
+      setListening(false);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      const cleaned = finalText.trim();
+      setInterim("");
+      if (cleaned) send(cleaned);
+    };
+    try {
+      recognition.start();
+      setListening(true);
+      recognitionRef.current = recognition;
+    } catch (e) {
+      console.warn("[aether] STT start failed:", e);
+    }
+  }, [sttSupported, listening, voiceCfg.language, send]);
+
+  // Auto-start mic when chat was opened by the wake word
+  React.useEffect(() => {
+    if (open && autoListen && sttSupported) {
+      onAutoListenConsumed?.();
+      // Tiny delay so the dialog has mounted before mic acquires focus
+      const t = setTimeout(() => startListening(), 250);
+      return () => clearTimeout(t);
+    }
+  }, [open, autoListen, sttSupported, startListening, onAutoListenConsumed]);
+
   const clearChat = () => {
     setMessages([]);
     setConversationId(null);
+    try { window.speechSynthesis?.cancel(); } catch {}
   };
 
   if (!open) return null;
@@ -241,16 +383,29 @@ function ChatDialog({ open, onClose, hass }) {
 
         <div className="chat-input">
           <input
-            value={input}
+            value={listening ? (interim || input) : input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") send(); }}
-            placeholder="Ask anything…"
+            placeholder={listening ? "Listening…" : "Ask anything…"}
             autoFocus
+            disabled={listening}
           />
+          {voiceEnabled && sttSupported && (
+            <button
+              className={"chat-mic" + (listening ? " on" : "")}
+              onClick={() => listening ? stopListening() : startListening()}
+              aria-label={listening ? "Stop listening" : "Start voice input"}
+              title={listening ? "Stop" : "Hold to talk"}
+            >
+              {listening
+                ? <span className="chat-mic-pulse" />
+                : <Icon name="motion" size={16} />}
+            </button>
+          )}
           <button
             className="chat-send"
-            onClick={send}
-            disabled={sending || !input.trim()}
+            onClick={() => send()}
+            disabled={sending || !input.trim() || listening}
             aria-label="Send"
           >
             <Icon name="next" size={16} />
