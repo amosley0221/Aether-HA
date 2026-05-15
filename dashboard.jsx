@@ -1175,7 +1175,9 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
     return () => mv.removeEventListener("load", onLoad);
   }, [src]);
 
-  // Apply current open/closed state
+  // Apply current open/closed state. We track which animation is currently
+  // selected so a state change re-plays it from the appropriate start.
+  const lastTargetRef = React.useRef(null);
   React.useEffect(() => {
     if (!Object.keys(animMap).length) return;
     const mv = mvRef.current;
@@ -1197,9 +1199,6 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
         action.paused  = true;
         action.time    = isOpen ? duration / 2 : 0;
       };
-
-      // Use combined door anim for any-door-open, plus per-door if
-      // the GLB happens to expose them (it doesn't in this case)
       setAction(animMap.combinedDoors,  anyDoor);
       setAction(animMap.frontDriver,    doors.frontDriver);
       setAction(animMap.frontPassenger, doors.frontPassenger);
@@ -1208,35 +1207,74 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
       setAction(animMap.frunk,          frunk);
       setAction(animMap.trunk,          trunk);
       setAction(animMap.chargePort,     chargePort);
-
-      // Single tick of the mixer to apply weights/time without animating
       try { actions[Object.keys(actions)[0]]?.getMixer?.().update(0); } catch {}
-    } else {
-      // ── Single-anim path: priority chooser
-      const target =
-        (chargePort && animMap.chargePort) ? animMap.chargePort :
-        (trunk      && animMap.trunk)      ? animMap.trunk :
-        (frunk      && animMap.frunk)      ? animMap.frunk :
-        (anyDoor    && animMap.combinedDoors) ? animMap.combinedDoors :
-        null;
+      return;
+    }
 
+    // ── Single-anim path: priority chooser
+    // We can only hold one part visually open at a time. Prefer trunk first
+    // because it's the most visually obvious + most common to leave open.
+    const target =
+      (trunk      && animMap.trunk)         ? animMap.trunk :
+      (frunk      && animMap.frunk)         ? animMap.frunk :
+      (anyDoor    && animMap.combinedDoors) ? animMap.combinedDoors :
+      (chargePort && animMap.chargePort)    ? animMap.chargePort :
+      null;
+
+    const lastTarget = lastTargetRef.current;
+
+    // Cancel any pending pause from a previous transition
+    if (lastTarget?.pauseTimer) {
+      clearTimeout(lastTarget.pauseTimer);
+    }
+
+    if (target) {
       try {
-        if (target) {
-          mv.animationName = target;
-          mv.pause();
-          const duration = mv.duration || 1;
-          mv.currentTime = duration / 2;   // midpoint of _open_close = fully open
-        } else {
-          // Nothing open — reset whichever animation is currently active
-          const reset = animMap.combinedDoors || animMap.trunk || animMap.frunk;
-          if (reset) {
-            mv.animationName = reset;
+        // Switch animation if needed
+        mv.animationName = target;
+        // Always start from frame 0 and play forward to the midpoint. The
+        // animation cycles closed → open → closed across its full duration,
+        // so the midpoint is the "fully open" pose. We must let the mixer
+        // run (i.e. NOT pause immediately) so bone positions actually
+        // update; otherwise the model stays at the rest pose.
+        mv.currentTime = 0;
+        mv.play({ repetitions: 1 });
+        const fullDurMs = (mv.duration || 4) * 1000;
+        const holdAtMs  = fullDurMs / 2;
+        const pauseTimer = setTimeout(() => {
+          try {
             mv.pause();
-            mv.currentTime = 0;
+            mv.currentTime = (mv.duration || 4) / 2;
+          } catch (e) {
+            console.warn("[aether] pause at midpoint failed:", e);
           }
-        }
+        }, holdAtMs);
+        lastTargetRef.current = { name: target, pauseTimer };
       } catch (e) {
-        console.warn("[aether] animation update failed:", e);
+        console.warn("[aether] animation play failed:", e);
+      }
+    } else {
+      // Nothing open — close any panel currently open by playing the second
+      // half of its animation (midpoint → end = closed for _open_close).
+      const closeName = lastTarget?.name
+        || animMap.combinedDoors || animMap.trunk || animMap.frunk;
+      if (closeName) {
+        try {
+          mv.animationName = closeName;
+          mv.currentTime = (mv.duration || 4) / 2;
+          mv.play({ repetitions: 1 });
+          const fullDurMs = (mv.duration || 4) * 1000;
+          const holdAtMs  = fullDurMs / 2;
+          const pauseTimer = setTimeout(() => {
+            try {
+              mv.pause();
+              mv.currentTime = mv.duration || 4;
+            } catch {}
+          }, holdAtMs);
+          lastTargetRef.current = { name: closeName, pauseTimer };
+        } catch (e) {
+          console.warn("[aether] close animation failed:", e);
+        }
       }
     }
   }, [
