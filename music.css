@@ -85,9 +85,17 @@
   cursor: grab;
   flex-shrink: 0;
   position: relative;
+  /* Allow vertical scroll/zoom but reserve horizontal pan for our drag */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .room:hover { background: rgba(255,255,255,.95); box-shadow: var(--shadow-soft); }
-.room.dragging { opacity: .55; cursor: grabbing; transform: scale(.97); }
+.room.dragging {
+  opacity: .55; cursor: grabbing; transform: scale(.97);
+  touch-action: none;
+}
 .room.drop-target { background: #eef4ff; box-shadow: 0 0 0 2px var(--accent) inset; }
 .room.active { background: #fff; box-shadow: var(--shadow-soft); }
 

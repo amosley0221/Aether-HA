@@ -20,6 +20,9 @@ function MusicPage() {
   const [tab, setTab]       = React.useState("Library");
   const [search, setSearch] = React.useState("");
 
+  const railRef       = React.useRef(null);
+  const pointerStart  = React.useRef(null);   // {id, x, y}
+
   // ─── Live room data ──────────────────────────────────────────────────────
   // mediaPlayer (MA wrapper) is the control entity. displayPlayer (Sonos
   // bare) mirrors externally-controlled playback. The rail reads from
@@ -130,31 +133,80 @@ function MusicPage() {
     svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.entityId });
   };
 
-  // ─── Drag-and-drop grouping ──────────────────────────────────────────────
-  const onDragStart = (id) => (e) => {
-    setDrag(id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", id);
+  // ─── Drag-to-group via Pointer Events (works on mouse + touch) ──────────
+  // HTML5 drag-and-drop doesn't fire on iOS Safari/Chrome. Pointer events do.
+  // Strategy:
+  //   - On pointerdown we record the start position but don't enter drag mode.
+  //   - On document pointermove, if displacement exceeds ~8px, we flip into
+  //     drag mode and start hit-testing the rail's room rectangles.
+  //   - On document pointerup, if drag fired and we're over a target, call
+  //     media_player.join. If pointer never moved enough, treat as a click
+  //     and set primary room.
+  const onRoomPointerDown = (roomId) => (e) => {
+    if (e.target.closest(".room-ctrl")) return; // clicking play button
+    pointerStart.current = { id: roomId, x: e.clientX, y: e.clientY };
   };
-  const onDragOver  = (id) => (e) => { e.preventDefault(); setOver(id); };
-  const onDragLeave = ()   => () => setOver(null);
-  const onDrop      = (targetId) => async (e) => {
-    e.preventDefault();
-    if (!drag || drag === targetId) { setDrag(null); setOver(null); return; }
-    const dragged = liveRooms.find(r => r.id === drag);
-    const target  = liveRooms.find(r => r.id === targetId);
-    if (!dragged?.entityId || !target?.entityId) { setDrag(null); setOver(null); return; }
-    try {
-      await svc("media_player.join", {
-        entity_id: target.entityId,
-        group_members: [dragged.entityId],
-      });
-    } catch (err) {
-      console.warn("[aether] media_player.join failed:", err);
-    }
-    setDrag(null); setOver(null);
-  };
-  const onDragEnd = () => { setDrag(null); setOver(null); };
+
+  React.useEffect(() => {
+    const onMove = (e) => {
+      const ps = pointerStart.current;
+      if (!ps) return;
+      const dx = e.clientX - ps.x;
+      const dy = e.clientY - ps.y;
+      const dragging = drag || (Math.hypot(dx, dy) > 8 ? ps.id : null);
+      if (dragging && dragging !== drag) setDrag(dragging);
+      if (!dragging) return;
+
+      // Hit-test against rail children
+      if (!railRef.current) return;
+      const candidates = railRef.current.querySelectorAll(".room");
+      let foundId = null;
+      for (const r of candidates) {
+        const rect = r.getBoundingClientRect();
+        if (e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top  && e.clientY <= rect.bottom) {
+          foundId = r.getAttribute("data-room-id");
+          break;
+        }
+      }
+      setOver(foundId && foundId !== dragging ? foundId : null);
+    };
+
+    const onUp = async () => {
+      const ps = pointerStart.current;
+      pointerStart.current = null;
+      if (drag && over) {
+        const dragged = liveRooms.find(r => r.id === drag);
+        const target  = liveRooms.find(r => r.id === over);
+        if (dragged?.entityId && target?.entityId) {
+          try {
+            await svc("media_player.join", {
+              entity_id: target.entityId,
+              group_members: [dragged.entityId],
+            });
+          } catch (err) {
+            console.warn("[aether] media_player.join failed:", err);
+          }
+        }
+      } else if (ps && !drag) {
+        // Was a tap, not a drag → treat as room selection
+        setPrimaryId(ps.id);
+        setUserSelectedPrimary(true);
+      }
+      setDrag(null);
+      setOver(null);
+    };
+
+    document.addEventListener("pointermove",  onMove);
+    document.addEventListener("pointerup",    onUp);
+    document.addEventListener("pointercancel", onUp);
+    return () => {
+      document.removeEventListener("pointermove",  onMove);
+      document.removeEventListener("pointerup",    onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+  }, [drag, over, liveRooms]);
+
   const ungroupPrimary = () => primaryCtrl?.attributes?.group_members?.length > 1
     && svc("media_player.unjoin", { entity_id: primary.entityId });
 
@@ -190,7 +242,7 @@ function MusicPage() {
           <button className="btn-pill" style={{ padding: "7px 10px" }}><Icon name="more" size={16} /></button>
         </div>
 
-        <div className="rooms-rail scroll-x">
+        <div className="rooms-rail scroll-x" ref={railRef}>
           {liveRooms.map(room => {
             const isPrimary = room.id === primaryId;
             const className = [
@@ -204,13 +256,8 @@ function MusicPage() {
               <div
                 key={room.id}
                 className={className}
-                draggable={!!room.entity}
-                onDragStart={onDragStart(room.id)}
-                onDragOver={onDragOver(room.id)}
-                onDragLeave={onDragLeave()}
-                onDrop={onDrop(room.id)}
-                onDragEnd={onDragEnd}
-                onClick={() => { setPrimaryId(room.id); setUserSelectedPrimary(true); }}
+                data-room-id={room.id}
+                onPointerDown={onRoomPointerDown(room.id)}
                 title={room.entity ? "Drag onto another room to group" : `Player offline (${room.entityId})`}
               >
                 <Avatar colors={room.color} />
@@ -361,7 +408,7 @@ function MusicPage() {
               ))}
             </div>
             <div className="lib-service">
-              {primaryCtrl?.attributes?.app_name || "Music Assistant"}
+              {cfg.serviceLabel || "Apple Music"}
             </div>
           </div>
 
@@ -372,6 +419,7 @@ function MusicPage() {
             playMedia={playMedia}
             tab={tab}
             externalQuery={search}
+            listenNow={cfg.listenNow}
           />
         </div>
       </div>
@@ -379,16 +427,33 @@ function MusicPage() {
   );
 }
 
-// Per-tab default location inside the browse_media tree.
+// Per-tab default location inside the browse_media tree. Each value is a
+// list of CHAINS; each chain is the sequence of folder titles to drill
+// through. The first chain that fully resolves is used. Title matching is
+// case-insensitive and substring-tolerant so minor wording differences
+// across MA versions still match.
 const LIB_TAB_TARGETS = {
-  "Listen Now": ["Favorites", "Music Assistant", "Recently Played"],
+  "Listen Now": [
+    ["Apple Music", "Listen Now"],
+    ["Apple Music", "For You"],
+    ["Apple Music", "Recently Added"],
+    ["Favorites"],
+  ],
   "Browse":     null,
-  "Radio":      ["Radio Browser", "Radio stations", "Radio"],
-  "Library":    ["Music Library", "Library", "Music Assistant"],
+  "Radio":      [
+    ["Apple Music", "Radio Stations"],
+    ["Apple Music", "Stations"],
+    ["Apple Music", "Radio"],
+    ["Radio Browser"],
+  ],
+  "Library":    [
+    ["Music Library"],
+    ["Library"],
+  ],
 };
 
 // ─── Unified Library: stack-based navigation across browse + search ──────
-function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
+function Library({ entityId, hassRef, playMedia, tab, externalQuery, listenNow }) {
   // Each entry is { kind: "browse" | "search", node?, items?, query?, title? }
   const [stack, setStack]     = React.useState([]);
   const [loading, setLoading] = React.useState(false);
@@ -408,10 +473,13 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
     setStack([]);
     if (tab === "Search") {
       if (query.trim()) runSearch(query.trim());
+    } else if (tab === "Listen Now" && Array.isArray(listenNow) && listenNow.length > 0) {
+      // User pinned specific items — render as a static section
+      setStack([{ kind: "static", items: listenNow, title: "Listen Now" }]);
     } else {
       runBrowse();
     }
-  }, [tab, entityId]);
+  }, [tab, entityId, listenNow]);
 
   // Debounced search re-run when query changes (Search tab only).
   React.useEffect(() => {
@@ -426,28 +494,38 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
     setLoading(true);
     setErr(null);
     try {
-      let node = await hassRef.current.callWS({
+      const root = await hassRef.current.callWS({
         type: "media_player/browse_media",
         entity_id: entityId,
       });
-      const targets = LIB_TAB_TARGETS[tab];
-      if (Array.isArray(targets)) {
-        for (const want of targets) {
-          const child = (node.children || []).find(
-            (c) => c.title?.toLowerCase() === want.toLowerCase()
-          );
-          if (child && child.can_expand) {
-            node = await hassRef.current.callWS({
-              type: "media_player/browse_media",
-              entity_id: entityId,
-              media_content_id: child.media_content_id,
-              media_content_type: child.media_content_type,
+      let node = root;
+      let title = root.title || "Browse";
+
+      const chains = LIB_TAB_TARGETS[tab];
+      if (Array.isArray(chains)) {
+        for (const chain of chains) {
+          let cur = root;
+          let ok  = true;
+          for (const wanted of chain) {
+            const w = wanted.toLowerCase();
+            const child = (cur.children || []).find((c) => {
+              const t = (c.title || "").toLowerCase();
+              return t === w || t.includes(w) || w.includes(t);
             });
-            break;
+            if (!child || !child.can_expand) { ok = false; break; }
+            try {
+              cur = await hassRef.current.callWS({
+                type: "media_player/browse_media",
+                entity_id: entityId,
+                media_content_id: child.media_content_id,
+                media_content_type: child.media_content_type,
+              });
+            } catch { ok = false; break; }
           }
+          if (ok) { node = cur; title = cur.title || chain.at(-1); break; }
         }
       }
-      setStack([{ kind: "browse", node, title: node.title || "Browse" }]);
+      setStack([{ kind: "browse", node, title }]);
     } catch (e) {
       setErr(e?.message || String(e));
     }
@@ -562,9 +640,11 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
 
       {top.kind === "search"
         ? <SearchResults items={top.items} onEnter={enter} />
-        : isTrackList(top.node?.children || [])
-          ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} />
-          : <ItemGrid items={top.node?.children || []} onEnter={enter} />
+        : top.kind === "static"
+          ? <ItemGrid items={top.items} onEnter={enter} />
+          : isTrackList(top.node?.children || [])
+            ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} />
+            : <ItemGrid items={top.node?.children || []} onEnter={enter} />
       }
     </div>
   );
@@ -598,8 +678,8 @@ function SearchResults({ items, onEnter }) {
             <h3 style={{ fontSize: 14 }}>{sec.title}</h3>
           </div>
           {sec.tracks
-            ? <TrackList items={sec.items.slice(0, 8)} onEnter={onEnter} />
-            : <ItemGrid items={sec.items.slice(0, 10)} onEnter={onEnter} />
+            ? <TrackList items={sec.items} onEnter={onEnter} />
+            : <ItemGrid items={sec.items} onEnter={onEnter} />
           }
         </div>
       ))}
@@ -613,7 +693,7 @@ function ItemGrid({ items, onEnter }) {
   }
   return (
     <div className="album-row">
-      {items.slice(0, 30).map((item, i) => {
+      {items.map((item, i) => {
         const title = item.title || item.name;
         const art   = item.thumbnail || item.image;
         const type  = item.media_class || item.media_content_type || "";

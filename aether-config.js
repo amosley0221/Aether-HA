@@ -14,6 +14,28 @@ const AETHER_CONFIG = {
   // to override (e.g. { name: "Antonio" }).
   user: { name: "" },
 
+  // Label shown in the music page library top-right corner.
+  serviceLabel: "Apple Music",
+
+  // Optional: pin specific albums/playlists to the "Listen Now" tab.
+  // Each entry is { title, image, media_content_id, media_content_type }.
+  // To get a media_content_id: open the Library or Search tab, drill until
+  // you find the album, then in DevTools Console run
+  //   await document.querySelector('home-assistant').hass.callWS({
+  //     type: "media_player/browse_media",
+  //     entity_id: "media_player.office_2",
+  //   })
+  // and copy the ids you want. Up to 24 fit nicely (5 cols × ~5 rows).
+  // If empty, Listen Now auto-drills into Apple Music → For You.
+  listenNow: [
+    // {
+    //   title: "DAMN.",
+    //   image: "https://…",
+    //   media_content_id: "library://album/12345",
+    //   media_content_type: "album",
+    // },
+  ],
+
   // mediaPlayer  = control entity (Music Assistant wrapper, supports
   //                search_media and routes Apple Music/Spotify/etc).
   // displayPlayer = read-only state mirror (Sonos integration entity).
