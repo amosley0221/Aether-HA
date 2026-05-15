@@ -836,20 +836,14 @@ function CarSection({ car, hass, editMode, onHideSection }) {
       <div className="car-card">
         <div className="car-card-image">
           {car.model3d ? (
-            React.createElement("model-viewer", {
-              src: car.model3d,
-              alt: `${car.year} ${car.model}`,
-              "auto-rotate": "",
-              "auto-rotate-delay": "1500",
-              "rotation-per-second": "18deg",
-              "camera-controls": "",
-              "touch-action": "pan-y",
-              "interaction-prompt": "none",
-              "shadow-intensity": "1",
-              "exposure": "1.0",
-              "environment-image": "neutral",
-              style: { width: "100%", height: "100%", minHeight: 240, "--poster-color": "transparent" },
-            })
+            <CarModel3D
+              src={car.model3d}
+              alt={`${car.year} ${car.model}`}
+              doors={doorOpen}
+              frunk={frunkOpen}
+              trunk={trunkOpen}
+              chargePort={chargePortOpen}
+            />
           ) : car.image ? (
             <img src={car.image} alt={`${car.year} ${car.model}`} />
           ) : (
@@ -960,6 +954,106 @@ function CarSection({ car, hass, editMode, onHideSection }) {
       </div>
     </>
   );
+}
+
+// Wraps Google's <model-viewer> and tries to drive the GLB's animations
+// or named meshes from the live entity states. The GLB needs to have
+// either:
+//   a) Named animation clips (e.g. "DoorOpenFL", "FrunkOpen", "TrunkOpen")
+//      that animate the corresponding panel from closed → open. We play
+//      forward to the end when open, reset to time 0 when closed.
+//   b) Named child meshes/nodes whose transforms we can rotate directly
+//      (more advanced, not yet implemented — would need Three.js access).
+// On first load we log the GLB's availableAnimations and scene hierarchy
+// to the console so we can see what's actually in the file.
+function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
+  const mvRef = React.useRef(null);
+  const [animMap, setAnimMap] = React.useState({});
+
+  // On model load, inspect what's in it and build a name → state mapping
+  React.useEffect(() => {
+    const mv = mvRef.current;
+    if (!mv) return;
+    const onLoad = () => {
+      const animations = mv.availableAnimations || [];
+      console.log("[aether] GLB loaded:", src);
+      console.log("[aether] availableAnimations:", animations);
+      try {
+        const model = mv.model;
+        if (model && model.materials) {
+          console.log("[aether] materials:", model.materials.map((m) => m.name));
+        }
+      } catch {}
+
+      // Heuristic matcher: which animation looks like which door/part
+      const match = (patterns) => {
+        for (const p of patterns) {
+          const hit = animations.find((a) => p.test(a));
+          if (hit) return hit;
+        }
+        return null;
+      };
+      setAnimMap({
+        frontDriver:    match([/door.*(fl|front.*left|driver|d_left|leftf)/i,    /(fl|left.*front|driver).*door/i]),
+        frontPassenger: match([/door.*(fr|front.*right|passenger|p_right|rightf)/i, /(fr|right.*front|passenger).*door/i]),
+        rearDriver:     match([/door.*(rl|rear.*left|back.*left|leftr)/i,        /(rl|left.*rear|left.*back).*door/i]),
+        rearPassenger:  match([/door.*(rr|rear.*right|back.*right|rightr)/i,     /(rr|right.*rear|right.*back).*door/i]),
+        frunk:          match([/frunk|hood|bonnet|front.*trunk|front.*lid/i]),
+        trunk:          match([/^trunk|rear.*lid|boot|tailgate|liftgate/i]),
+        chargePort:     match([/charge.*port|charge.*door|charger/i]),
+      });
+    };
+    mv.addEventListener("load", onLoad);
+    return () => mv.removeEventListener("load", onLoad);
+  }, [src]);
+
+  // Apply current open/closed state to the animations
+  React.useEffect(() => {
+    const mv = mvRef.current;
+    if (!mv || !Object.keys(animMap).length) return;
+    const set = (animName, isOpen) => {
+      if (!animName) return;
+      try {
+        mv.animationName = animName;
+        // Set to last frame when open, first frame when closed. The GLB
+        // creator's intent for these animations is closed→open, so
+        // duration is the "fully open" state.
+        const duration = mv.duration || 0;
+        mv.currentTime = isOpen ? duration : 0;
+        mv.pause();
+      } catch (e) {
+        console.warn("[aether] anim set failed:", animName, e);
+      }
+    };
+    set(animMap.frontDriver,    doors.frontDriver);
+    set(animMap.frontPassenger, doors.frontPassenger);
+    set(animMap.rearDriver,     doors.rearDriver);
+    set(animMap.rearPassenger,  doors.rearPassenger);
+    set(animMap.frunk,          frunk);
+    set(animMap.trunk,          trunk);
+    set(animMap.chargePort,     chargePort);
+  }, [
+    animMap,
+    doors.frontDriver, doors.frontPassenger,
+    doors.rearDriver,  doors.rearPassenger,
+    frunk, trunk, chargePort,
+  ]);
+
+  return React.createElement("model-viewer", {
+    ref: mvRef,
+    src,
+    alt,
+    "auto-rotate": "",
+    "auto-rotate-delay": "1500",
+    "rotation-per-second": "18deg",
+    "camera-controls": "",
+    "touch-action": "pan-y",
+    "interaction-prompt": "none",
+    "shadow-intensity": "1",
+    "exposure": "1.0",
+    "environment-image": "neutral",
+    style: { width: "100%", height: "100%", minHeight: 240, "--poster-color": "transparent" },
+  });
 }
 
 // Top-down schematic of the car body with door / frunk / trunk / charge-port
