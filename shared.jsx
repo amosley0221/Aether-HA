@@ -80,6 +80,8 @@ const Icon = ({ name, size = 16 }) => {
     wifi:    <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M5 12a10 10 0 0 1 14 0"/><path {...p} d="M8.5 15.5a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1" fill="currentColor"/></svg>,
     bookmark:       <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M6 3h12v19l-6-4.2L6 22z"/></svg>,
     bookmarkFilled: <svg viewBox="0 0 24 24" width={size} height={size}><path d="M6 3h12v19l-6-4.2L6 22z" fill="currentColor"/></svg>,
+    bolt:    <svg viewBox="0 0 24 24" width={size} height={size}><path d="M13 2L4 14h7l-2 8 11-14h-7l2-6z" fill="currentColor"/></svg>,
+    car:     <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M5 14l1.5-5A2 2 0 0 1 8.4 7.5h7.2a2 2 0 0 1 1.9 1.5L19 14M5 14h14M5 14v3.5a1 1 0 0 0 1 1h1.5a1 1 0 0 0 1-1V17M17.5 17v.5a1 1 0 0 0 1 1H20a1 1 0 0 0 1-1V14"/><circle cx="8" cy="14.5" r="1" fill="currentColor"/><circle cx="16" cy="14.5" r="1" fill="currentColor"/></svg>,
   };
   return svgs[name] || null;
 };

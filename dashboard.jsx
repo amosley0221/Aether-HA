@@ -224,11 +224,16 @@ function DashboardPage() {
     }
   };
 
+  // ─── Car (Tesla) ───────────────────────────────────────────────────────
+  const carCfg = cfg.car;
+  const hasCar = carCfg && hass?.states?.[carCfg.entities?.lock];
+
   // ─── Filters ────────────────────────────────────────────────────────────
   // Counts and visibility reflect post-hidden lists. A section is only
   // rendered if not in hidden.sections AND it has at least one visible item.
   const filters = [
-    { key: "All",      icon: "grid",    count: visLights.length + vCameras.length + vClimates.length + visRooms.length },
+    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + visLights.length + vCameras.length + vClimates.length + visRooms.length },
+    ...(hasCar ? [{ key: "Car", icon: "car", count: 1 }] : []),
     { key: "Lights",   icon: "bulb",    count: visLights.length },
     { key: "Cameras",  icon: "camera",  count: vCameras.length },
     { key: "Climate",  icon: "thermo",  count: vClimates.length },
@@ -284,6 +289,16 @@ function DashboardPage() {
           </button>
         ))}
       </div>
+
+      {/* Car (Tesla) */}
+      {show("Car") && hasCar && (
+        <CarSection
+          car={carCfg}
+          hass={hass}
+          editMode={editMode}
+          onHideSection={() => hideSection("Car")}
+        />
+      )}
 
       {/* Lights */}
       {show("Lights") && visLights.length > 0 && (
@@ -730,6 +745,264 @@ function CameraDialog({ open, camera, hass, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Car (Tesla) section ─────────────────────────────────────────────────
+function CarSection({ car, hass, editMode, onHideSection }) {
+  const e = car.entities;
+  const s = (id) => hass?.states?.[id];
+  const state = (id) => s(id)?.state;
+  const attr  = (id, k) => s(id)?.attributes?.[k];
+  const num   = (id) => {
+    const v = parseFloat(state(id));
+    return Number.isFinite(v) ? v : null;
+  };
+
+  const battery        = num(e.battery);
+  const range          = num(e.range);
+  const inside         = num(e.inside);
+  const outside        = num(e.outside);
+  const speed          = num(e.speed) ?? 0;
+  const odometer       = num(e.odometer);
+  const timeToFull     = num(e.timeToFullCharge);
+  const charging       = /^(charging|starting)$/i.test(state(e.chargingState) || "");
+  const isLocked       = state(e.lock) === "locked";
+  const climateState   = s(e.climate);
+  const climateOn      = climateState && climateState.state !== "off" && climateState.state !== "unavailable";
+  const climateTarget  = climateState?.attributes?.temperature;
+  const sentryOn       = state(e.sentry) === "on";
+  const defrostOn      = state(e.defrost) === "on";
+  const cableConnected = state(e.chargeCableConnected) === "on";
+  const shift          = state(e.shiftState);
+  const isDriving      = speed > 0 || (shift && shift !== "P" && shift !== "unknown");
+
+  const doors = e.doors || {};
+  const anyDoorOpen = Object.values(doors).some(id => state(id) === "on");
+
+  const svc = (service, data) => callService(hass, service, data);
+  const toggle = (entityId, on) => svc(on ? "switch.turn_off" : "switch.turn_on", { entity_id: entityId });
+  const toggleLock = () => svc(isLocked ? "lock.unlock" : "lock.lock", { entity_id: e.lock });
+  const toggleClimate = () => svc(climateOn ? "climate.turn_off" : "climate.turn_on", { entity_id: e.climate });
+  const toggleChargePort = () => svc("cover.toggle", { entity_id: e.chargePort });
+  const openFrunk = () => svc("cover.open_cover", { entity_id: e.frunk });
+  const openTrunk = () => svc("cover.open_cover", { entity_id: e.trunk });
+
+  const batteryColor = charging ? "var(--accent)"
+                     : battery == null    ? "var(--ink-4)"
+                     : battery < 20       ? "#e1314a"
+                     : battery < 50       ? "#c97a52"
+                     : "#2f8f63";
+
+  return (
+    <>
+      <div className="dash-section-head">
+        <h2>Car</h2>
+        <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span>
+            {car.name}
+            {isDriving ? ` · Driving ${Math.round(speed)} mph` :
+              cableConnected && charging ? ` · Charging${timeToFull ? ` · ${timeToFull.toFixed(1)}h to full` : ""}` :
+              cableConnected ? " · Plugged in" :
+              isLocked ? " · Parked" : " · Parked · Unlocked"}
+          </span>
+          {editMode && (
+            <button className="section-hide-btn" onClick={onHideSection}>Hide section</button>
+          )}
+        </div>
+      </div>
+
+      <div className="car-card">
+        <div className="car-card-image">
+          {car.image
+            ? <img src={car.image} alt={`${car.year} ${car.model}`} />
+            : <TeslaModel3SVG />
+          }
+        </div>
+
+        <div className="car-card-body">
+          <div className="car-name-row">
+            <div>
+              <div className="car-name">{car.name}</div>
+              <div className="car-sub">{car.year} {car.model} · {car.color}{car.wheels ? ` · ${car.wheels}` : ""}</div>
+            </div>
+            <div className="car-status-badges">
+              {anyDoorOpen      && <span className="car-badge alert">Door open</span>}
+              {!isLocked        && <span className="car-badge warn">Unlocked</span>}
+              {sentryOn         && <span className="car-badge accent">Sentry</span>}
+              {charging         && <span className="car-badge ok">⚡ Charging</span>}
+              {!charging && cableConnected && <span className="car-badge">Plugged in</span>}
+            </div>
+          </div>
+
+          <div className="car-battery">
+            <div className="car-battery-track">
+              <div className="car-battery-fill" style={{
+                width: `${battery ?? 0}%`,
+                background: batteryColor,
+              }} />
+            </div>
+            <div className="car-battery-text">
+              <span className="car-battery-pct">{battery != null ? `${Math.round(battery)}%` : "—"}</span>
+              {range != null && <span className="car-battery-range">{Math.round(range)} mi</span>}
+            </div>
+          </div>
+
+          <div className="car-stats-row">
+            {inside != null && (
+              <div className="car-stat">
+                <span className="car-stat-lbl">Inside</span>
+                <span className="car-stat-val">{Math.round(inside)}°</span>
+              </div>
+            )}
+            {outside != null && (
+              <div className="car-stat">
+                <span className="car-stat-lbl">Outside</span>
+                <span className="car-stat-val">{Math.round(outside)}°</span>
+              </div>
+            )}
+            {climateTarget != null && (
+              <div className="car-stat">
+                <span className="car-stat-lbl">Target</span>
+                <span className="car-stat-val">{Math.round(climateTarget)}°</span>
+              </div>
+            )}
+            {odometer != null && (
+              <div className="car-stat">
+                <span className="car-stat-lbl">Odometer</span>
+                <span className="car-stat-val">{Math.round(odometer).toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="car-actions">
+            <button className={"car-btn" + (isLocked ? " on" : "")} onClick={toggleLock}>
+              <Icon name={isLocked ? "lock" : "unlock"} size={14} />
+              {isLocked ? "Locked" : "Lock"}
+            </button>
+            <button className={"car-btn" + (climateOn ? " on" : "")} onClick={toggleClimate}>
+              <Icon name="thermo" size={14} /> Climate
+            </button>
+            <button className={"car-btn" + (defrostOn ? " on" : "")} onClick={() => toggle(e.defrost, defrostOn)}>
+              <Icon name="sparkle" size={14} /> Defrost
+            </button>
+            <button className={"car-btn" + (sentryOn ? " on" : "")} onClick={() => toggle(e.sentry, sentryOn)}>
+              <Icon name="camera" size={14} /> Sentry
+            </button>
+            <button className="car-btn" onClick={toggleChargePort}>
+              <Icon name="bolt" size={14} /> Charge port
+            </button>
+            <button className="car-btn" onClick={openFrunk}>
+              <Icon name="grid" size={14} /> Frunk
+            </button>
+            <button className="car-btn" onClick={openTrunk}>
+              <Icon name="grid" size={14} /> Trunk
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Stylized Tesla Model 3 — side profile with sport wheels. Replaced when
+// AETHER_CONFIG.car.image points to a real photo (e.g. /local/aether/tesla.png).
+function TeslaModel3SVG() {
+  return (
+    <svg viewBox="0 0 600 220" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="ae-body" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stopColor="#ffffff"/>
+          <stop offset="45%" stopColor="#ececec"/>
+          <stop offset="100%" stopColor="#a8a8a8"/>
+        </linearGradient>
+        <linearGradient id="ae-window" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stopColor="#5a6a7a" stopOpacity="0.35"/>
+          <stop offset="60%" stopColor="#2a3a4a" stopOpacity="0.78"/>
+          <stop offset="100%" stopColor="#142235" stopOpacity="0.92"/>
+        </linearGradient>
+        <radialGradient id="ae-rim" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"  stopColor="#e8e8e8"/>
+          <stop offset="65%" stopColor="#a0a0a0"/>
+          <stop offset="100%" stopColor="#5a5a5a"/>
+        </radialGradient>
+        <radialGradient id="ae-tire" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"  stopColor="#404040"/>
+          <stop offset="80%" stopColor="#1a1a1a"/>
+          <stop offset="100%" stopColor="#000000"/>
+        </radialGradient>
+      </defs>
+
+      {/* Ground shadow */}
+      <ellipse cx="300" cy="198" rx="225" ry="7" fill="rgba(0,0,0,0.28)" />
+
+      {/* Body - Model 3 silhouette */}
+      <path d="
+        M 78 168 L 102 168
+        A 35 35 0 0 1 178 168
+        L 232 168
+        L 240 158 L 242 100
+        Q 256 72 320 65
+        L 380 65
+        Q 442 70 478 95
+        L 510 130 L 522 158 L 510 168
+        A 35 35 0 0 1 434 168
+        L 408 168 L 78 168 Z
+      " fill="url(#ae-body)" stroke="#888" strokeWidth="1.4" />
+
+      {/* Continuous glass roof */}
+      <path d="
+        M 254 92 Q 268 72 320 67
+        L 380 67 Q 438 72 470 95
+        L 458 100 Q 426 78 380 75
+        L 320 75 Q 278 78 264 100 Z
+      " fill="url(#ae-window)" />
+
+      {/* Highlight reflection on glass */}
+      <path d="
+        M 256 88 Q 270 72 320 68
+        L 380 68 Q 416 72 446 86
+        L 442 90 Q 416 76 380 74
+        L 320 74 Q 282 76 262 92 Z
+      " fill="#fff" opacity="0.32" />
+
+      {/* Door / pillar lines */}
+      <line x1="298" y1="78" x2="298" y2="168" stroke="#bbb" strokeWidth="0.8" opacity="0.6"/>
+      <line x1="366" y1="73" x2="366" y2="168" stroke="#bbb" strokeWidth="0.8" opacity="0.6"/>
+
+      {/* Flush door handles */}
+      <rect x="320" y="138" width="22" height="3.5" rx="1.5" fill="#666" />
+      <rect x="395" y="138" width="22" height="3.5" rx="1.5" fill="#666" />
+
+      {/* Front wheel + 5-spoke 19" Silver Sport rim */}
+      <circle cx="140" cy="172" r="34" fill="url(#ae-tire)" />
+      <circle cx="140" cy="172" r="24" fill="url(#ae-rim)" stroke="#3a3a3a" strokeWidth="1" />
+      <g transform="translate(140 172)" stroke="#666" strokeWidth="3.2" strokeLinecap="round">
+        <circle r="6.5" fill="#bbb" />
+        <line x1="0"     y1="-22"   x2="0"     y2="22" />
+        <line x1="20.9"  y1="-6.8"  x2="-20.9" y2="6.8" />
+        <line x1="20.9"  y1="6.8"   x2="-20.9" y2="-6.8" />
+        <line x1="12.9"  y1="-17.8" x2="-12.9" y2="17.8" />
+        <line x1="12.9"  y1="17.8"  x2="-12.9" y2="-17.8" />
+      </g>
+
+      {/* Rear wheel */}
+      <circle cx="396" cy="172" r="34" fill="url(#ae-tire)" />
+      <circle cx="396" cy="172" r="24" fill="url(#ae-rim)" stroke="#3a3a3a" strokeWidth="1" />
+      <g transform="translate(396 172)" stroke="#666" strokeWidth="3.2" strokeLinecap="round">
+        <circle r="6.5" fill="#bbb" />
+        <line x1="0"     y1="-22"   x2="0"     y2="22" />
+        <line x1="20.9"  y1="-6.8"  x2="-20.9" y2="6.8" />
+        <line x1="20.9"  y1="6.8"   x2="-20.9" y2="-6.8" />
+        <line x1="12.9"  y1="-17.8" x2="-12.9" y2="17.8" />
+        <line x1="12.9"  y1="17.8"  x2="-12.9" y2="-17.8" />
+      </g>
+
+      {/* Headlight */}
+      <ellipse cx="92" cy="148" rx="13" ry="6" fill="#fff" opacity="0.95" stroke="#aaa" strokeWidth="0.5" />
+      {/* Taillight */}
+      <ellipse cx="514" cy="148" rx="10" ry="5" fill="#d4444a" opacity="0.85" />
+    </svg>
   );
 }
 

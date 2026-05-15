@@ -294,6 +294,145 @@
 }
 .section-hide-btn:hover { background: #fdecea; color: #c1432d; border-color: rgba(193,67,45,.25); }
 
+/* ─── Car (Tesla) card ─────────────────────────────────────────────── */
+.car-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.2fr);
+  gap: 24px;
+  background: var(--paper);
+  border-radius: var(--radius-xl);
+  padding: 20px 22px;
+  border: 1px solid var(--hairline-2);
+  box-shadow: var(--shadow-card);
+  position: relative;
+  overflow: hidden;
+  align-items: stretch;
+}
+.car-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(80% 60% at 0% 0%, rgba(122,168,214,.10), transparent 55%),
+    radial-gradient(60% 80% at 100% 100%, rgba(15,28,46,.06), transparent 60%);
+  pointer-events: none;
+}
+.car-card-image {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+}
+.car-card-image svg,
+.car-card-image img {
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+  display: block;
+}
+.car-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+}
+.car-name-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.car-name { font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
+.car-sub  { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.car-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.car-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--paper-2);
+  color: var(--ink-3);
+  border: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+.car-badge.alert  { background: #fdecea; color: #c1432d; border-color: rgba(193,67,45,.25); }
+.car-badge.warn   { background: #fdf2dd; color: #a47214; border-color: rgba(164,114,20,.25); }
+.car-badge.ok     { background: #e7f5ee; color: #2f8f63; border-color: rgba(47,143,99,.25); }
+.car-badge.accent { background: rgba(42,111,219,.12); color: var(--accent); border-color: rgba(42,111,219,.3); }
+
+.car-battery {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.car-battery-track {
+  flex: 1;
+  height: 8px;
+  background: rgba(0,0,0,.06);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.car-battery-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width .35s ease, background .35s;
+}
+.car-battery-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.car-battery-pct   { font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+.car-battery-range { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+
+.car-stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+}
+.car-stat { display: flex; flex-direction: column; gap: 2px; }
+.car-stat-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3); font-weight: 600; }
+.car-stat-val { font-size: 18px; font-weight: 500; letter-spacing: -.01em; }
+
+.car-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.car-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  padding: 8px 13px;
+  border-radius: 999px;
+  background: var(--paper-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s, transform .12s;
+}
+.car-btn:hover  { background: #fff; color: var(--ink); border-color: var(--ink-4); }
+.car-btn:active { transform: scale(.96); }
+.car-btn.on {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
+}
+.car-btn.on:hover { background: var(--accent); border-color: var(--accent); }
+
 /* ─── Mobile overrides ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .dash { padding: 0 14px 32px; gap: 14px; }
@@ -325,4 +464,16 @@
   .dial .center .t { font-size: 26px; }
 
   .dash-section-head h2 { font-size: 16px; }
+
+  .car-card {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+    gap: 12px;
+  }
+  .car-card-image { min-height: 140px; }
+  .car-card-image svg, .car-card-image img { max-width: 100%; }
+  .car-name { font-size: 18px; }
+  .car-battery-pct { font-size: 17px; }
+  .car-stat-val { font-size: 16px; }
+  .car-btn { font-size: 11px; padding: 7px 11px; }
 }

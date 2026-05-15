@@ -137,9 +137,61 @@ const AETHER_CONFIG = {
     "camera.office_live_view",
   ],
 
-  climate: ["climate.hallway", "climate.tone_climate"],
+  climate: ["climate.hallway"],
 
   weather: "weather.forecast_home",
+
+  // Car / Tesla integration. Set image: "/local/aether/tesla.png" (or any
+  // hosted URL) to override the built-in SVG with a real photo. Drop the
+  // file in /config/www/aether/ and it's served at that path.
+  car: {
+    name: "Tone",
+    year: "2020",
+    model: "Model 3",
+    color: "White",
+    wheels: '19" Silver Sport',
+    image: null,                          // null → render the built-in SVG
+    entities: {
+      lock:                  "lock.tone_lock",
+      chargeCableLock:       "lock.tone_charge_cable_lock",
+      climate:               "climate.tone_climate",
+      chargePort:            "cover.tone_charge_port_door",
+      frunk:                 "cover.tone_frunk",
+      trunk:                 "cover.tone_trunk",
+      ventWindows:           "cover.tone_vent_windows",
+      charge:                "switch.tone_charge",
+      defrost:               "switch.tone_defrost_mode",
+      sentry:                "switch.tone_sentry_mode",
+      steeringWheelHeater:   "switch.tone_steering_wheel_heater",
+      valet:                 "switch.tone_valet_mode",
+      battery:               "sensor.tone_battery_level",
+      range:                 "sensor.tone_battery_range",
+      inside:                "sensor.tone_inside_temperature",
+      outside:               "sensor.tone_outside_temperature",
+      chargingState:         "sensor.tone_charging",
+      shiftState:            "sensor.tone_shift_state",
+      speed:                 "sensor.tone_speed",
+      odometer:              "sensor.tone_odometer",
+      timeToFullCharge:      "sensor.tone_time_to_full_charge",
+      destination:           "sensor.tone_destination",
+      distanceToArrival:     "sensor.tone_distance_to_arrival",
+      chargeCableConnected:  "binary_sensor.tone_charge_cable",
+      preconditioning:       "binary_sensor.tone_preconditioning_enabled",
+      userPresent:           "binary_sensor.tone_user_present",
+      doors: {
+        frontDriver:    "binary_sensor.tone_front_driver_door",
+        frontPassenger: "binary_sensor.tone_front_passenger_door",
+        rearDriver:     "binary_sensor.tone_rear_driver_door",
+        rearPassenger:  "binary_sensor.tone_rear_passenger_door",
+      },
+      tires: {
+        frontLeft:  "sensor.tone_tire_pressure_front_left",
+        frontRight: "sensor.tone_tire_pressure_front_right",
+        rearLeft:   "sensor.tone_tire_pressure_rear_left",
+        rearRight:  "sensor.tone_tire_pressure_rear_right",
+      },
+    },
+  },
 
   // Lights that aren't pinned to a room above. Shown under "All lights" on
   // the dashboard so nothing is hidden.

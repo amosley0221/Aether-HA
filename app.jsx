@@ -81,17 +81,55 @@ function ChatDialog({ open, onClose, hass }) {
   const scrollTop = useModalAnchor(open);
 
   // Load available conversation agents (Home Assistant + any LLM ones the
-  // user has configured) so we can let them pick.
+  // user has configured) so we can let them pick. Auto-prefers an LLM
+  // agent (Anthropic / OpenAI / Gemini) over the default HA intent agent,
+  // because that's almost always the smarter answer. User's explicit
+  // selection is persisted to frontend/get_user_data and remembered.
   React.useEffect(() => {
     if (!open || !hass) return;
-    hass.callWS({ type: "conversation/agent/list" })
-      .then((r) => {
-        const list = r?.agents || [];
-        setAgents(list);
-        if (!agentId && list.length > 0) setAgentId(list[0].id);
-      })
-      .catch(() => { /* default agent is implicit */ });
+    (async () => {
+      let list = [];
+      try {
+        const r = await hass.callWS({ type: "conversation/agent/list" });
+        list = r?.agents || [];
+      } catch {}
+      setAgents(list);
+      if (!list.length) return;
+
+      // Restore previously chosen agent if it still exists
+      let restored = null;
+      try {
+        const r = await hass.callWS({
+          type: "frontend/get_user_data",
+          key:  "aether_chat_agent",
+        });
+        if (r?.value && list.find(a => a.id === r.value)) restored = r.value;
+      } catch {}
+
+      const llmPriority = [
+        (a) => /anthropic|claude/i.test(a.name || ""),
+        (a) => /openai|gpt/i.test(a.name || ""),
+        (a) => /google.*generative|gemini/i.test(a.name || ""),
+        (a) => a.id !== "homeassistant" && a.id !== "conversation.home_assistant",
+      ];
+      const pick = restored
+        || llmPriority.map(p => list.find(p)).find(Boolean)?.id
+        || list[0].id;
+      if (!agentId) setAgentId(pick);
+    })();
   }, [open, hass]);
+
+  const onAgentChange = async (newId) => {
+    setAgentId(newId);
+    setConversationId(null); // new agent → fresh conversation
+    try {
+      await hass.callWS({
+        type: "frontend/set_user_data",
+        key:  "aether_chat_agent",
+        value: newId,
+      });
+    } catch {}
+  };
 
   // Auto-scroll to bottom as messages come in
   React.useEffect(() => {
@@ -147,7 +185,7 @@ function ChatDialog({ open, onClose, hass }) {
               <select
                 className="chat-agent"
                 value={agentId || ""}
-                onChange={(e) => setAgentId(e.target.value)}
+                onChange={(e) => onAgentChange(e.target.value)}
               >
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
