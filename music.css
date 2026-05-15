@@ -564,6 +564,23 @@
 }
 .modal-btn.primary:hover { background: var(--accent); border-color: var(--accent); }
 
+/* EQ dialog rows */
+.eq-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline-2);
+  gap: 16px;
+}
+.eq-row:last-child { border-bottom: 0; }
+.eq-label {
+  font-size: 14px;
+  color: var(--ink);
+  text-transform: capitalize;
+}
+.eq-row .tile-toggle { flex-shrink: 0; }
+
 /* ─── Mobile overrides ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .music { padding: 0 14px 32px; gap: 14px; }

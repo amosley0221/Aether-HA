@@ -38,10 +38,12 @@ function MusicPage() {
 
   const [primaryId, setPrimaryId]                 = React.useState(null);
   const [userSelectedPrimary, setUserSelectedPrimary] = React.useState(false);
-  const [drag, setDrag]     = React.useState(null);
-  const [over, setOver]     = React.useState(null);
-  const [tab, setTab]       = React.useState("Library");
-  const [search, setSearch] = React.useState("");
+  const [drag, setDrag]       = React.useState(null);
+  const [over, setOver]       = React.useState(null);
+  const [tab, setTab]         = React.useState("Library");
+  const [search, setSearch]   = React.useState("");
+  const [eqOpen, setEqOpen]   = React.useState(false);
+  const [queueOpen, setQueueOpen] = React.useState(false);
 
   const railRef       = React.useRef(null);
   const pointerStart  = React.useRef(null);   // {id, x, y}
@@ -304,8 +306,12 @@ function MusicPage() {
               }}
             />
           </div>
-          <button className="btn-pill" title="Up next"><Icon name="up" /> Up Next</button>
-          <button className="btn-pill" title="EQ"><Icon name="eq" /> EQ</button>
+          <button className="btn-pill" title="Up next" onClick={() => setQueueOpen(true)}>
+            <Icon name="up" /> Up Next
+          </button>
+          <button className="btn-pill" title="EQ & audio features" onClick={() => setEqOpen(true)}>
+            <Icon name="eq" /> EQ
+          </button>
           <button className="btn-pill" style={{ padding: "7px 10px" }}><Icon name="more" size={16} /></button>
         </div>
 
@@ -524,6 +530,20 @@ function MusicPage() {
           />
         </div>
       </div>
+
+      <EQDialog
+        open={eqOpen}
+        onClose={() => setEqOpen(false)}
+        room={primary}
+        hass={hass}
+      />
+      <QueueDialog
+        open={queueOpen}
+        onClose={() => setQueueOpen(false)}
+        entityId={primary?.entityId}
+        hassRef={hassRef}
+        hass={hass}
+      />
     </div>
   );
 }
@@ -969,6 +989,182 @@ function TrackList({ items, parent, onEnter }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ─── EQ dialog: per-room Sonos audio feature switches ────────────────────
+// The user's Sonos integration exposes a consistent set of switches per
+// speaker (crossfade, loudness, night sound, etc.). We list whichever
+// exist for the primary room and let the user toggle them.
+function EQDialog({ open, onClose, room, hass }) {
+  if (!open || !room) return null;
+  const base = (room.displayId || room.entityId || "").replace(/^media_player\./, "");
+  const root = base.replace(/_\d+$/, "");
+  const candidates = [
+    "crossfade", "loudness", "night_sound", "speech_enhancement",
+    "surround_enabled", "surround_music_full_volume",
+    "subwoofer_enabled", "tv_autoplay", "ungroup_on_autoplay",
+  ];
+  const switches = candidates
+    .map((name) => ({ name, id: `switch.${root}_${name}` }))
+    .map((s) => ({ ...s, state: hass?.states?.[s.id] }))
+    .filter((s) => s.state);
+
+  const labelize = (s) => {
+    const fn = s.state?.attributes?.friendly_name;
+    if (fn) return fn.replace(new RegExp(`^${room.name}\\s*`, "i"), "");
+    return s.name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{room.name} · EQ & Audio</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body">
+          {switches.length === 0 ? (
+            <div style={{ color: "var(--ink-3)", fontSize: 13, padding: "12px 0" }}>
+              No audio-feature switches exposed for {room.name}. (Sonos integration
+              normally creates entities like <code>switch.{root}_loudness</code>,
+              <code>switch.{root}_night_sound</code>, etc. — check Settings → Devices
+              → Sonos.)
+            </div>
+          ) : (
+            switches.map((s) => {
+              const on = s.state.state === "on";
+              return (
+                <div key={s.id} className="eq-row">
+                  <span className="eq-label">{labelize(s)}</span>
+                  <div
+                    className={"tile-toggle" + (on ? " on" : "")}
+                    onClick={() => callService(hass,
+                      on ? "switch.turn_off" : "switch.turn_on",
+                      { entity_id: s.id }
+                    )}
+                  />
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Up Next dialog: shows the MA queue for the primary player ───────────
+function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
+  const [items, setItems]     = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr]         = React.useState(null);
+
+  React.useEffect(() => {
+    if (!open || !entityId || !hassRef.current) return;
+    setLoading(true);
+    setErr(null);
+    (async () => {
+      // Try MA's documented WS commands, then fall back to media_player's
+      // generic browse of the queue.
+      const tries = [
+        { type: "music_assistant/players/queue_items", queue_id: entityId, limit: 30 },
+        { type: "music_assistant/queues/items",         queue_id: entityId, limit: 30 },
+        { type: "music_assistant/queue/items",          queue_id: entityId, limit: 30 },
+      ];
+      let got = null;
+      let lastErr = null;
+      for (const msg of tries) {
+        try {
+          got = await hassRef.current.callWS(msg);
+          break;
+        } catch (e) { lastErr = e; }
+      }
+      if (got) {
+        setItems(Array.isArray(got) ? got : (got.items || got.queue_items || []));
+      } else {
+        setErr(lastErr?.message || "Queue unavailable");
+      }
+      setLoading(false);
+    })();
+  }, [open, entityId, hassRef]);
+
+  if (!open) return null;
+
+  const jumpTo = async (index, item) => {
+    const tries = [
+      { service: "media_player.play_media", data: {
+        entity_id: entityId,
+        media_content_id: item.uri || item.media_content_id,
+        media_content_type: item.media_type || item.media_content_type,
+      } },
+      { ws: { type: "music_assistant/players/queue_index", queue_id: entityId, index } },
+    ];
+    for (const t of tries) {
+      try {
+        if (t.service) {
+          const [d, s] = t.service.split(".");
+          await hass.callService(d, s, t.data);
+        } else {
+          await hass.callWS(t.ws);
+        }
+        return;
+      } catch (_) {/* try next */}
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Up Next</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body">
+          {loading ? (
+            <div className="lib-status">Loading queue…</div>
+          ) : err ? (
+            <div className="lib-status" style={{ color: "var(--ink-3)" }}>
+              <div>Couldn't load queue.</div>
+              <div style={{ fontSize: 11, marginTop: 8 }}>{err}</div>
+            </div>
+          ) : items.length === 0 ? (
+            <div className="lib-status">No tracks queued.</div>
+          ) : (
+            <div className="track-list">
+              {items.map((track, i) => {
+                const title = track.name || track.title || track.media_title || "Unknown";
+                const meta  = track.artists?.map((a) => a.name).join(", ")
+                           || track.artist || track.album?.name || "";
+                const art   = track.image || track.thumbnail || track.metadata?.images?.[0]?.path;
+                return (
+                  <button
+                    key={(track.uri || track.media_content_id || title) + i}
+                    className="track-row"
+                    onClick={() => jumpTo(i, track)}
+                    title={title}
+                  >
+                    <div className="num">{i + 1}</div>
+                    <div
+                      className="thumb"
+                      style={art
+                        ? { backgroundImage: `url('${art}')`, backgroundSize: "cover", backgroundPosition: "center" }
+                        : { background: "linear-gradient(160deg, #6a6fc4, #2a2e7a)" }
+                      }
+                    />
+                    <div className="info">
+                      <div className="title">{title}</div>
+                      <div className="meta">{meta}</div>
+                    </div>
+                    <Icon name="play" size={14} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
