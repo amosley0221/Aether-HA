@@ -1288,14 +1288,27 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
         action.paused  = true;
         action.time    = isOpen ? duration / 2 : 0;
       };
-      setAction(animMap.combinedDoors,  anyDoor);
-      setAction(animMap.frontDriver,    doors.frontDriver);
-      setAction(animMap.frontPassenger, doors.frontPassenger);
-      setAction(animMap.rearDriver,     doors.rearDriver);
-      setAction(animMap.rearPassenger,  doors.rearPassenger);
-      setAction(animMap.frunk,          frunk);
-      setAction(animMap.trunk,          trunk);
-      setAction(animMap.chargePort,     chargePort);
+
+      // If the GLB exposes per-door animations, use them for accuracy.
+      // The combined 'all_doors' clip is only a fallback for models that
+      // don't ship individual door clips. Using both at once would make
+      // every door open when only one is actually open.
+      const hasPerDoor = !!(animMap.frontDriver || animMap.frontPassenger
+                         || animMap.rearDriver  || animMap.rearPassenger);
+
+      if (hasPerDoor) {
+        setAction(animMap.combinedDoors,  false);   // disable combined
+        setAction(animMap.frontDriver,    doors.frontDriver);
+        setAction(animMap.frontPassenger, doors.frontPassenger);
+        setAction(animMap.rearDriver,     doors.rearDriver);
+        setAction(animMap.rearPassenger,  doors.rearPassenger);
+      } else {
+        setAction(animMap.combinedDoors,  anyDoor);
+      }
+
+      setAction(animMap.frunk,      frunk);
+      setAction(animMap.trunk,      trunk);
+      setAction(animMap.chargePort, chargePort);
       try { actions[Object.keys(actions)[0]]?.getMixer?.().update(0); } catch {}
       return;
     }
