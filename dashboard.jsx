@@ -137,45 +137,28 @@ function DashboardPage() {
     };
   }).filter(c => c.entity);
 
-  // Camera thumbnails use HA's auth/sign_path WS call to get a fresh
-  // signed URL for /api/camera_proxy/<entity_id>. Plain camera_proxy URLs
-  // (or even entity_picture's signed token) can fail inside the panel
-  // depending on integration version, so signing per-load is the
-  // most reliable approach. Re-sign every minute for tiles.
-  const [signedUrls, setSignedUrls] = React.useState({});
+  // Camera thumbnails use HA's pre-signed entity_picture URL (already
+  // contains a valid token in the query string). A short tick refreshes
+  // the snapshot every 10s by appending an ?hc= cache-buster. We do
+  // NOT call auth/sign_path or /api/camera_proxy/ — those return 500
+  // on some camera integrations. Live view uses WebRTC over the HA
+  // WebSocket instead (see CameraStream).
+  const [tileTick, setTileTick] = React.useState(0);
   React.useEffect(() => {
-    if (!hass) return;
-    let cancelled = false;
-    const refresh = async () => {
-      const next = {};
-      for (const id of (cfg.cameras || [])) {
-        try {
-          const r = await hass.callWS({
-            type: "auth/sign_path",
-            path: `/api/camera_proxy/${id}`,
-            expires: 120,
-          });
-          if (r?.path) next[id] = r.path;
-        } catch (_) { /* fall back to entity_picture or unsigned */ }
-      }
-      if (!cancelled) setSignedUrls(next);
-    };
-    refresh();
-    const tickerId = setInterval(refresh, 60 * 1000);
-    return () => { cancelled = true; clearInterval(tickerId); };
-  }, [hass, JSON.stringify(cfg.cameras || [])]);
+    const id = setInterval(() => setTileTick((t) => t + 1), 10 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const cameras = (cfg.cameras || []).map(id => {
     const s = hass?.states?.[id];
     const a = s?.attributes || {};
-    const signed = signedUrls[id];
-    const fallback = a.entity_picture || `/api/camera_proxy/${id}`;
+    const pic = a.entity_picture;
     return {
       id, entity: s,
       name: a.friendly_name || id.split(".")[1].replace(/_/g, " "),
-      thumb:    signed || fallback,
-      // Raw API path for the modal to sign with its own faster ticker
-      proxyPath: `/api/camera_proxy/${id}`,
+      picture: pic,
+      thumb:   pic ? `${pic}${pic.includes("?") ? "&" : "?"}hc=${tileTick}` : null,
+      online:  s?.state !== "unavailable",
     };
   }).filter(c => c.entity);
 
@@ -510,7 +493,7 @@ function DashboardPage() {
                 <div
                   className="feed"
                   style={{
-                    backgroundImage: `url('${c.thumb}')`,
+                    backgroundImage: c.thumb ? `url('${c.thumb}')` : "none",
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                     backgroundColor: "#1a1a1a",
@@ -616,79 +599,15 @@ function HiddenManagerDialog({ open, onClose, hidden, hass, showDevice, showSect
   );
 }
 
-// Full-size camera live view. Tries to play actual video:
-//   1. Request an HLS stream URL from HA via camera/stream WS command
-//   2. Sign it via auth/sign_path
-//   3. Render in <video> — iOS Safari supports HLS natively, Chrome on
-//      Android plays it via native HLS support on most newer devices.
-// If HLS isn't available for the camera (some integrations don't expose
-// a stream), fall back to the signed still-image refresh approach.
+// Full-size camera live view. Plays actual video via WebRTC (Ring, Nest,
+// go2rtc, Reolink and most modern integrations) with HLS fallback for
+// stream-only cameras. All transport negotiation happens over the HA
+// WebSocket (hass.connection) — no REST hits to camera_proxy, no
+// auth/sign_path, because both are 500-erroring on this install while
+// the WS-based approach works (verified against the other dashboard).
 function CameraDialog({ open, camera, hass, onClose }) {
-  const [hlsUrl, setHlsUrl]     = React.useState("");
-  const [stillUrl, setStillUrl] = React.useState("");
-  const [mode, setMode]         = React.useState("loading"); // loading | hls | still
-  const scrollTop               = useModalAnchor(open);
-
-  // Try HLS first
-  React.useEffect(() => {
-    if (!open || !camera || !hass) return;
-    let cancelled = false;
-    setMode("loading");
-    setHlsUrl("");
-    setStillUrl("");
-    (async () => {
-      try {
-        const r = await hass.callWS({
-          type: "camera/stream",
-          entity_id: camera.id,
-        });
-        if (cancelled) return;
-        if (r?.url) {
-          // The returned url is already relative (/api/hls/...). Sign it so
-          // the browser request carries an auth token in the query string.
-          let final = r.url;
-          try {
-            const signed = await hass.callWS({
-              type: "auth/sign_path",
-              path: r.url,
-              expires: 600,
-            });
-            if (signed?.path) final = signed.path;
-          } catch {}
-          if (!cancelled) {
-            setHlsUrl(final);
-            setMode("hls");
-          }
-          return;
-        }
-      } catch (_) { /* camera/stream not available or camera has no stream */ }
-      if (!cancelled) setMode("still");
-    })();
-    return () => { cancelled = true; };
-  }, [open, camera, hass]);
-
-  // Still-image fallback (signed JPEG refreshed every 1.5s)
-  React.useEffect(() => {
-    if (mode !== "still" || !open || !camera || !hass) return;
-    let cancelled = false;
-    const sign = async () => {
-      const base = camera.proxyPath || `/api/camera_proxy/${camera.id}`;
-      for (const path of [`${base}?time=${Date.now()}`, base]) {
-        try {
-          const r = await hass.callWS({
-            type: "auth/sign_path", path, expires: 60,
-          });
-          if (!cancelled && r?.path) { setStillUrl(r.path); return; }
-        } catch {}
-      }
-    };
-    sign();
-    const id = setInterval(sign, 1500);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [mode, open, camera, hass]);
-
+  const scrollTop = useModalAnchor(open);
   if (!open || !camera) return null;
-
   return (
     <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
@@ -700,52 +619,264 @@ function CameraDialog({ open, camera, hass, onClose }) {
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body" style={{ padding: 0, background: "#0a0a0a" }}>
-          {mode === "hls" && hlsUrl ? (
-            <video
-              key={hlsUrl}
-              src={hlsUrl}
-              autoPlay
-              muted
-              playsInline
-              controls
-              style={{
-                display: "block",
-                width: "100%",
-                maxHeight: "70vh",
-                height: "55vh",
-                background: "#0a0a0a",
-                objectFit: "contain",
-              }}
-            />
-          ) : mode === "still" && stillUrl ? (
-            <div
-              style={{
-                width: "100%",
-                minHeight: 320,
-                maxHeight: "70vh",
-                height: "55vh",
-                backgroundImage: `url('${stillUrl}')`,
-                backgroundColor: "#0a0a0a",
-                backgroundSize: "contain",
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "center",
-              }}
-            />
-          ) : (
-            <div
-              style={{
-                minHeight: 320, height: "55vh",
-                display: "grid", placeItems: "center",
-                color: "#777", fontSize: 13, background: "#0a0a0a",
-              }}
-            >
-              Loading stream…
-            </div>
-          )}
+          <CameraStream entityId={camera.id} hass={hass} poster={camera.picture} />
         </div>
       </div>
     </div>
   );
+}
+
+// Live camera <video> player. Transport ladder, in order of preference:
+//   1. camera/webrtc/offer (subscribe stream — modern WebRTC, ICE)
+//   2. camera/web_rtc_offer (legacy single-shot WebRTC)
+//   3. camera/stream { format: 'hls' } (HLS, native on Safari, hls.js elsewhere)
+// First transport whose video element receives a frame within 6s wins.
+// Snapshot from entity_picture is shown as a poster behind <video> while
+// it negotiates so the modal never looks blank.
+function CameraStream({ entityId, hass, poster }) {
+  const videoRef = React.useRef(null);
+  const [status, setStatus] = React.useState("loading"); // loading | playing | error
+  const [err, setErr]       = React.useState(null);
+
+  React.useEffect(() => {
+    if (!entityId || !hass?.connection) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    let cancelled = false;
+    let teardown = null;
+    setStatus("loading");
+    setErr(null);
+
+    (async () => {
+      for (const method of [tryWebRTCSubscribe, tryWebRTCLegacy, tryHLS]) {
+        if (cancelled) return;
+        try {
+          const dispose = await method({ entityId, hass, video });
+          if (cancelled) { try { dispose?.(); } catch {} return; }
+          try {
+            await waitForFirstFrame(video, 6000);
+            teardown = dispose;
+            if (!cancelled) setStatus("playing");
+            return;
+          } catch (_) {
+            try { dispose?.(); } catch {}
+          }
+        } catch (e) {
+          console.warn(`[aether] camera transport ${method.name} failed:`, e?.message || e);
+        }
+      }
+      if (!cancelled) {
+        setStatus("error");
+        setErr("All stream transports failed — camera may not support WebRTC or HLS.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try { teardown?.(); } catch {}
+      try {
+        const v = videoRef.current;
+        if (v) {
+          v.srcObject = null;
+          v.removeAttribute("src");
+          v.load();
+        }
+      } catch {}
+    };
+  }, [entityId, hass]);
+
+  const showPoster = status !== "playing" && poster;
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "55vh",
+        maxHeight: "70vh",
+        minHeight: 320,
+        background: "#0a0a0a",
+        backgroundImage: showPoster ? `url('${poster}')` : "none",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }}
+    >
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        controls
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          background: "transparent",
+          display: "block",
+        }}
+      />
+      {status === "loading" && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "grid", placeItems: "center",
+          color: "rgba(255,255,255,.85)",
+          fontSize: 13,
+          background: "rgba(0,0,0,.35)",
+          pointerEvents: "none",
+        }}>
+          Connecting…
+        </div>
+      )}
+      {status === "error" && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "grid", placeItems: "center",
+          color: "rgba(255,255,255,.85)",
+          fontSize: 12,
+          background: "rgba(0,0,0,.55)",
+          padding: 24, textAlign: "center",
+        }}>
+          <div>
+            <div style={{ color: "#ff9080", fontWeight: 600, marginBottom: 6 }}>Stream unavailable</div>
+            <div style={{ opacity: .8 }}>{err}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function tryWebRTCSubscribe({ entityId, hass, video }) {
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+  try {
+    const cfg = await hass.connection.sendMessagePromise({
+      type: "camera/webrtc/get_client_config", entity_id: entityId,
+    });
+    if (cfg?.configuration) pc.setConfiguration(cfg.configuration);
+  } catch {}
+
+  pc.addTransceiver("audio", { direction: "recvonly" });
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.ontrack = (e) => {
+    if (e.streams?.[0]) video.srcObject = e.streams[0];
+  };
+
+  let sessionId = null;
+  pc.onicecandidate = async (e) => {
+    if (!e.candidate || !sessionId) return;
+    try {
+      await hass.connection.sendMessagePromise({
+        type: "camera/webrtc/candidate",
+        entity_id: entityId,
+        session_id: sessionId,
+        candidate: e.candidate.toJSON(),
+      });
+    } catch {}
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const unsubscribe = await hass.connection.subscribeMessage(
+    async (msg) => {
+      try {
+        if (msg.type === "session") sessionId = msg.session_id;
+        else if (msg.type === "answer") {
+          await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: msg.answer }));
+        } else if (msg.type === "candidate" && msg.candidate) {
+          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        } else if (msg.type === "error") {
+          console.warn("[aether] webrtc subscribe error:", msg);
+        }
+      } catch (e) {
+        console.warn("[aether] webrtc msg handler:", e);
+      }
+    },
+    { type: "camera/webrtc/offer", entity_id: entityId, offer: offer.sdp }
+  );
+
+  return () => { try { unsubscribe(); } catch {} try { pc.close(); } catch {} };
+}
+
+async function tryWebRTCLegacy({ entityId, hass, video }) {
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+  pc.addTransceiver("audio", { direction: "recvonly" });
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.ontrack = (e) => {
+    if (e.streams?.[0]) video.srcObject = e.streams[0];
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const resp = await hass.connection.sendMessagePromise({
+    type: "camera/web_rtc_offer",
+    entity_id: entityId,
+    offer: offer.sdp,
+  });
+  if (!resp?.answer) throw new Error("no answer from web_rtc_offer");
+  await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: resp.answer }));
+  return () => { try { pc.close(); } catch {} };
+}
+
+async function tryHLS({ entityId, hass, video }) {
+  const resp = await hass.connection.sendMessagePromise({
+    type: "camera/stream",
+    entity_id: entityId,
+    format: "hls",
+  });
+  if (!resp?.url) throw new Error("no stream URL");
+  const url = resp.url;
+
+  // Safari / iOS plays HLS natively
+  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = url;
+    return () => { try { video.removeAttribute("src"); video.load(); } catch {} };
+  }
+
+  // Everywhere else: load hls.js on demand (cached after first time)
+  if (!window.Hls) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js";
+      s.onload = res;
+      s.onerror = () => rej(new Error("hls.js failed to load"));
+      document.head.appendChild(s);
+    });
+  }
+  const hls = new window.Hls();
+  hls.loadSource(url);
+  hls.attachMedia(video);
+  return () => { try { hls.destroy(); } catch {} };
+}
+
+function waitForFirstFrame(video, timeout) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      video.removeEventListener("loadeddata", onFrame);
+      video.removeEventListener("playing", onFrame);
+      clearTimeout(t);
+    };
+    const onFrame = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    video.addEventListener("loadeddata", onFrame);
+    video.addEventListener("playing", onFrame);
+    const t = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("first frame timeout"));
+    }, timeout);
+  });
 }
 
 // ─── Car (Tesla) section ─────────────────────────────────────────────────
