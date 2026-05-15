@@ -10,7 +10,9 @@
    use that. */
 
 const AETHER_CONFIG = {
-  user: { name: "Ben" },
+  // Leave name empty to use the logged-in HA user's first name. Set a string
+  // to override (e.g. { name: "Antonio" }).
+  user: { name: "" },
 
   // mediaPlayer  = control entity (Music Assistant wrapper, supports
   //                search_media and routes Apple Music/Spotify/etc).

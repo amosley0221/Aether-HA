@@ -1,40 +1,168 @@
-/* Dashboard — control everything in the house */
+/* Dashboard — wired to Home Assistant via hass.
+   - Lights: live state + brightness; toggle/set call light.* services
+   - Speakers: live MA wrappers; toggle calls media_player.media_play/pause
+   - Climate: live; ± buttons call climate.set_temperature
+   - Cameras: stream via HA's media_player_proxy URL when available
+   - Quick actions in the ribbon mass-call services across config groups */
 
-function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, setPlayPrimary }) {
+function DashboardPage() {
+  const hass = useHass();
+  const cfg  = window.AETHER_CONFIG;
+
   const [filter, setFilter] = React.useState("All");
+
+  // ─── Live device lists from config + hass state ─────────────────────────
+  const lightEntries = React.useMemo(() => {
+    const ids = new Set();
+    const roomFor = {};
+    for (const r of cfg.rooms) {
+      for (const lid of (r.lights || [])) { ids.add(lid); roomFor[lid] = r.name; }
+    }
+    for (const lid of (cfg.globalLights || [])) { ids.add(lid); roomFor[lid] = roomFor[lid] || ""; }
+    return [...ids].map(id => {
+      const s = hass?.states?.[id];
+      const a = s?.attributes || {};
+      const rgb = a.rgb_color;
+      return {
+        id,
+        name: a.friendly_name || id.split(".")[1].replace(/_/g, " "),
+        room: roomFor[id] || "",
+        on: s?.state === "on",
+        brightness: Math.round(((a.brightness ?? 0) / 255) * 100),
+        color: rgb ? `rgb(${rgb.join(",")})` : "#e8a850",
+        entity: s,
+      };
+    });
+  }, [hass, cfg]);
+
+  const lightsOn = lightEntries.filter(l => l.on).length;
+
+  const rooms = React.useMemo(() => {
+    const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
+    return cfg.rooms.map(room => {
+      const ctrl    = hass?.states?.[room.mediaPlayer];
+      const display = room.displayPlayer ? hass?.states?.[room.displayPlayer] : null;
+      const active  = [ctrl, display].filter(Boolean).sort(
+        (a, b) => score(a.state) - score(b.state)
+      )[0] || ctrl || display;
+      const a = active?.attributes || {};
+      return {
+        ...room,
+        entity: active,
+        ctrl,
+        playing: active?.state === "playing",
+        track:   a.media_title || "",
+        artist:  a.media_artist || "",
+        art:     a.entity_picture || null,
+        volume:  Math.round(((ctrl?.attributes?.volume_level ?? a.volume_level) ?? 0) * 100),
+        state:   active?.state || "unavailable",
+      };
+    });
+  }, [hass, cfg.rooms]);
+
+  const playingCount = rooms.filter(r => r.playing).length;
+
+  const climates = (cfg.climate || []).map(id => {
+    const s = hass?.states?.[id];
+    const a = s?.attributes || {};
+    return {
+      id, entity: s,
+      name: a.friendly_name || id,
+      room: id === "climate.hallway" ? "Whole house" : "",
+      mode: s?.state || "off",
+      current: a.current_temperature,
+      target:  a.temperature,
+      min: a.min_temp || 50,
+      max: a.max_temp || 90,
+      unit: a.temperature_unit || "F",
+    };
+  }).filter(c => c.entity);
+
+  const cameras = (cfg.cameras || []).map(id => {
+    const s = hass?.states?.[id];
+    const a = s?.attributes || {};
+    return {
+      id, entity: s,
+      name: a.friendly_name || id.split(".")[1].replace(/_/g, " "),
+      // HA exposes a camera proxy stream at /api/camera_proxy_stream/<entity_id>
+      // for MJPEG, or /api/camera_proxy/<entity_id> for still images. Use the
+      // still image refreshed every few seconds — works inside HA without auth.
+      thumb: `/api/camera_proxy/${id}`,
+    };
+  }).filter(c => c.entity);
+
+  // ─── Service helpers ────────────────────────────────────────────────────
+  const svc = (service, data) => callService(hass, service, data);
+
+  const toggleLight = (id) => {
+    const s = hass?.states?.[id];
+    svc(s?.state === "on" ? "light.turn_off" : "light.turn_on", { entity_id: id });
+  };
+  const setLightBrightness = (id, pct) => svc("light.turn_on", {
+    entity_id: id,
+    brightness_pct: pct,
+  });
+  const bumpThermo = (id, delta) => {
+    const c = climates.find(cc => cc.id === id);
+    if (!c) return;
+    const next = Math.max(c.min, Math.min(c.max, (c.target || c.current || 70) + delta));
+    svc("climate.set_temperature", { entity_id: id, temperature: next });
+  };
+  const togglePerRoom = (room) => {
+    if (!room?.entity) return;
+    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.mediaPlayer });
+  };
+  const setRoomVolume = (room, v) => svc("media_player.volume_set", {
+    entity_id: room.mediaPlayer, volume_level: v / 100,
+  });
+
+  // Quick actions
+  const allOff = () => svc("light.turn_off", { entity_id: lightEntries.map(l => l.id) });
+  const allOn  = () => svc("light.turn_on",  { entity_id: lightEntries.map(l => l.id) });
+  const pauseAll = () => svc("media_player.media_pause", {
+    entity_id: rooms.filter(r => r.playing).map(r => r.mediaPlayer),
+  });
+  const resumeAll = () => svc("media_player.media_play", {
+    entity_id: rooms.filter(r => r.entity && !r.playing).map(r => r.mediaPlayer),
+  });
+  const goodnight = () => {
+    if (lightEntries.length) svc("light.turn_off", { entity_id: lightEntries.map(l => l.id) });
+    if (rooms.some(r => r.playing)) {
+      svc("media_player.media_pause", { entity_id: rooms.filter(r => r.playing).map(r => r.mediaPlayer) });
+    }
+  };
+
+  // ─── Filters ────────────────────────────────────────────────────────────
   const filters = [
-    { key: "All",      icon: "grid",    count: devices.lights.length + devices.cameras.length + devices.locks.length + devices.climate.length + rooms.length },
-    { key: "Lights",   icon: "bulb",    count: devices.lights.length },
-    { key: "Cameras",  icon: "camera",  count: devices.cameras.length },
-    { key: "Locks",    icon: "lock",    count: devices.locks.length },
-    { key: "Climate",  icon: "thermo",  count: devices.climate.length },
+    { key: "All",      icon: "grid",    count: lightEntries.length + cameras.length + climates.length + rooms.length },
+    { key: "Lights",   icon: "bulb",    count: lightEntries.length },
+    { key: "Cameras",  icon: "camera",  count: cameras.length },
+    { key: "Climate",  icon: "thermo",  count: climates.length },
     { key: "Speakers", icon: "speaker", count: rooms.length },
-    { key: "Sensors",  icon: "motion",  count: devices.sensors.length },
   ];
-
-  const toggleLight  = (id) => setDevices(d => ({ ...d, lights:  d.lights.map(l => l.id === id ? { ...l, on: !l.on } : l) }));
-  const setLightBri  = (id, v) => setDevices(d => ({ ...d, lights: d.lights.map(l => l.id === id ? { ...l, brightness: v } : l) }));
-  const toggleLock   = (id) => setDevices(d => ({ ...d, locks:   d.locks.map(l => l.id === id ? { ...l, locked: !l.locked } : l) }));
-  const bumpThermo   = (id, delta) => setDevices(d => ({ ...d, climate: d.climate.map(c => c.id === id ? { ...c, target: Math.max(60, Math.min(80, c.target + delta)) } : c) }));
-
-  const allOff = () => setDevices(d => ({ ...d, lights: d.lights.map(l => ({ ...l, on: false })) }));
-  const allOn  = () => setDevices(d => ({ ...d, lights: d.lights.map(l => ({ ...l, on: true  })) }));
-  const lockAll = () => setDevices(d => ({ ...d, locks: d.locks.map(l => ({ ...l, locked: true })) }));
-
   const show = (cat) => filter === "All" || filter === cat;
+
+  if (!hass) {
+    return <div className="page dash" style={{ padding: 40 }}>Connecting to Home Assistant…</div>;
+  }
 
   return (
     <div className="page dash" data-screen-label="03 Dashboard">
       {/* Ribbon */}
       <div className="dash-ribbon">
-        <button className="q" onClick={allOff}><span className="dot" style={{ background: "#b6b4ac" }} /> All lights off</button>
-        <button className="q" onClick={allOn}><span className="dot" style={{ background: "#e8a850" }} /> All lights on</button>
-        <button className="q" onClick={lockAll}><Icon name="lock" size={14} /> Lock everything</button>
-        <button className="q" onClick={() => setPlayPrimary(p => !p)}>
-          <Icon name={playPrimary ? "pause" : "play"} size={14} /> {playPrimary ? "Pause music" : "Resume music"}
+        <button className="q" onClick={allOff}>
+          <span className="dot" style={{ background: "#b6b4ac" }} /> All lights off
         </button>
-        <button className="q"><Icon name="moon" size={14} /> Goodnight</button>
-        <button className="q on"><Icon name="sun" size={14} /> Home</button>
+        <button className="q" onClick={allOn}>
+          <span className="dot" style={{ background: "#e8a850" }} /> All lights on
+        </button>
+        <button className="q" onClick={playingCount > 0 ? pauseAll : resumeAll}>
+          <Icon name={playingCount > 0 ? "pause" : "play"} size={14} />
+          {playingCount > 0 ? "Pause all music" : "Resume music"}
+        </button>
+        <button className="q" onClick={goodnight}>
+          <Icon name="moon" size={14} /> Goodnight
+        </button>
       </div>
 
       {/* Filters */}
@@ -52,29 +180,39 @@ function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, 
       </div>
 
       {/* Lights */}
-      {show("Lights") && (
+      {show("Lights") && lightEntries.length > 0 && (
         <React.Fragment>
-          <div className="dash-section-head"><h2>Lights</h2><div className="meta">{devices.lights.filter(l => l.on).length} of {devices.lights.length} on</div></div>
+          <div className="dash-section-head">
+            <h2>Lights</h2>
+            <div className="meta">{lightsOn} of {lightEntries.length} on</div>
+          </div>
           <div className="dash-grid">
-            {devices.lights.map(l => (
+            {lightEntries.map(l => (
               <div key={l.id} className={"tile light" + (l.on ? " on" : "")}>
                 <div className="bulb-glow" style={{ background: `radial-gradient(circle, ${l.color}80, transparent 60%)` }} />
                 <div className="tile-head">
                   <div className="row" style={{ alignItems: "flex-start" }}>
-                    <div className="tile-icon warm" style={{ background: l.on ? `${l.color}30` : undefined, color: l.on ? l.color : undefined }}><Icon name="bulb" /></div>
+                    <div
+                      className="tile-icon warm"
+                      style={l.on ? { background: `${l.color}30`, color: l.color } : undefined}
+                    >
+                      <Icon name="bulb" />
+                    </div>
                     <div>
                       <div className="tile-name">{l.name}</div>
-                      <div className="tile-room">{l.room}</div>
+                      <div className="tile-room">{l.room || "—"}</div>
                     </div>
                   </div>
                   <div className={"tile-toggle" + (l.on ? " on" : "")} onClick={() => toggleLight(l.id)} />
                 </div>
                 <div className="tslider">
                   <Icon name="sun" size={14} />
-                  <input className="range thin" type="range" min="0" max="100"
+                  <input
+                    className="range thin"
+                    type="range" min="0" max="100"
                     value={l.brightness}
                     disabled={!l.on}
-                    onChange={(e) => setLightBri(l.id, Number(e.target.value))}
+                    onChange={(e) => setLightBrightness(l.id, Number(e.target.value))}
                   />
                   <span className="pct">{l.brightness}%</span>
                 </div>
@@ -85,9 +223,12 @@ function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, 
       )}
 
       {/* Speakers */}
-      {show("Speakers") && (
+      {show("Speakers") && rooms.length > 0 && (
         <React.Fragment>
-          <div className="dash-section-head"><h2>Speakers</h2><div className="meta">{rooms.filter(r => r.playing).length} playing</div></div>
+          <div className="dash-section-head">
+            <h2>Speakers</h2>
+            <div className="meta">{playingCount} playing</div>
+          </div>
           <div className="dash-grid">
             {rooms.map(r => (
               <div key={r.id} className="tile speaker">
@@ -96,32 +237,46 @@ function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, 
                     <Avatar colors={r.color} size={38} />
                     <div>
                       <div className="tile-name">{r.name}</div>
-                      <div className="tile-room">{r.playing ? "Playing" : "Idle"}</div>
+                      <div className="tile-room">
+                        {r.playing ? "Playing"
+                          : r.state === "paused" ? "Paused"
+                          : r.state === "unavailable" ? "Offline"
+                          : "Idle"}
+                      </div>
                     </div>
                   </div>
-                  <div className={"tile-toggle" + (r.playing ? " on" : "")}
-                    onClick={() => setRooms(rs => rs.map(rr => rr.id === r.id ? { ...rr, playing: !rr.playing } : rr))}
+                  <div
+                    className={"tile-toggle" + (r.playing ? " on" : "")}
+                    onClick={() => togglePerRoom(r)}
                   />
                 </div>
-                {r.playing ? (
+                {r.playing && r.track ? (
                   <div className="now-mini-row">
-                    <div className="ma" />
+                    <div
+                      className="ma"
+                      style={r.art ? { backgroundImage: `url('${r.art}')`, backgroundSize: "cover" } : undefined}
+                    />
                     <div className="meta">
                       <div className="ti">{r.track}</div>
                       <div className="ar">{r.artist}</div>
                     </div>
-                    <button className="play-mini" onClick={() => setRooms(rs => rs.map(rr => rr.id === r.id ? { ...rr, playing: !rr.playing } : rr))}>
+                    <button className="play-mini" onClick={() => togglePerRoom(r)}>
                       <Icon name="pause" size={12} />
                     </button>
                   </div>
                 ) : (
-                  <div style={{ fontSize: 12, color: "var(--ink-3)" }}>No audio · tap to resume last queue</div>
+                  <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                    {r.state === "unavailable" ? "Player offline" : "No audio · tap to resume last queue"}
+                  </div>
                 )}
                 <div className="tslider">
                   <Icon name="volume" size={14} />
-                  <input className="range thin" type="range" min="0" max="100"
+                  <input
+                    className="range thin"
+                    type="range" min="0" max="100"
                     value={r.volume}
-                    onChange={(e) => setRooms(rs => rs.map(rr => rr.id === r.id ? { ...rr, volume: Number(e.target.value) } : rr))}
+                    disabled={!r.entity}
+                    onChange={(e) => setRoomVolume(r, Number(e.target.value))}
                   />
                   <span className="pct">{r.volume}</span>
                 </div>
@@ -132,12 +287,19 @@ function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, 
       )}
 
       {/* Climate */}
-      {show("Climate") && (
+      {show("Climate") && climates.length > 0 && (
         <React.Fragment>
-          <div className="dash-section-head"><h2>Climate</h2><div className="meta">Auto · cooling</div></div>
+          <div className="dash-section-head">
+            <h2>Climate</h2>
+            <div className="meta">
+              {climates.map(c => `${c.mode} · ${c.current ?? "—"}°`).join(" · ")}
+            </div>
+          </div>
           <div className="dash-grid">
-            {devices.climate.map(c => {
-              const pct = (c.target - 60) / 20;
+            {climates.map(c => {
+              const pct = c.target != null
+                ? (c.target - c.min) / (c.max - c.min)
+                : 0;
               const C = 2 * Math.PI * 56;
               return (
                 <div key={c.id} className="tile thermo">
@@ -146,19 +308,25 @@ function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, 
                       <div className="tile-icon warm"><Icon name="thermo" /></div>
                       <div>
                         <div className="tile-name">{c.name}</div>
-                        <div className="tile-room">{c.room} · {c.mode}</div>
+                        <div className="tile-room">
+                          {c.room || ""}{c.room ? " · " : ""}{c.mode}
+                        </div>
                       </div>
                     </div>
                   </div>
                   <div className="dial">
                     <svg viewBox="0 0 120 120">
                       <circle className="track" cx="60" cy="60" r="56" />
-                      <circle className="fill"  cx="60" cy="60" r="56"
-                        strokeDasharray={C} strokeDashoffset={C * (1 - pct)} />
+                      <circle
+                        className="fill"
+                        cx="60" cy="60" r="56"
+                        strokeDasharray={C}
+                        strokeDashoffset={C * (1 - pct)}
+                      />
                     </svg>
                     <div className="center">
-                      <div className="t">{c.target}°</div>
-                      <div className="sub">{c.current}° now</div>
+                      <div className="t">{c.target ?? "—"}°</div>
+                      <div className="sub">{c.current ?? "—"}° now</div>
                     </div>
                   </div>
                   <div className="therm-row">
@@ -168,111 +336,39 @@ function DashboardPage({ rooms, setRooms, devices, setDevices, np, playPrimary, 
                 </div>
               );
             })}
-            <div className="tile">
-              <div className="tile-head">
-                <div className="row" style={{ alignItems: "flex-start" }}>
-                  <div className="tile-icon cool"><Icon name="fan" /></div>
-                  <div>
-                    <div className="tile-name">Whole house fan</div>
-                    <div className="tile-room">Off</div>
-                  </div>
-                </div>
-                <div className="tile-toggle" />
-              </div>
-              <div className="tile-foot">
-                <div className="val">3<span className="unit">/5 speed</span></div>
-                <div>Auto by AQI</div>
-              </div>
-            </div>
-            <div className="tile">
-              <div className="tile-head">
-                <div className="row" style={{ alignItems: "flex-start" }}>
-                  <div className="tile-icon green"><Icon name="leaf" /></div>
-                  <div>
-                    <div className="tile-name">Air purifier</div>
-                    <div className="tile-room">Bedroom · Quiet</div>
-                  </div>
-                </div>
-                <div className="tile-toggle on" />
-              </div>
-              <div className="tile-foot">
-                <div className="val">42<span className="unit"> AQI</span></div>
-                <div>Filter 86%</div>
-              </div>
-            </div>
           </div>
         </React.Fragment>
       )}
 
       {/* Cameras */}
-      {show("Cameras") && (
+      {show("Cameras") && cameras.length > 0 && (
         <React.Fragment>
-          <div className="dash-section-head"><h2>Cameras</h2><div className="meta">All live</div></div>
+          <div className="dash-section-head">
+            <h2>Cameras</h2>
+            <div className="meta">All live</div>
+          </div>
           <div className="dash-grid">
-            {devices.cameras.map(c => (
+            {cameras.map(c => (
               <div key={c.id} className="tile camera">
-                <div className="feed" style={{ background: c.feed }} />
+                <div
+                  className="feed"
+                  style={{
+                    backgroundImage: `url('${c.thumb}')`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    backgroundColor: "#1a1a1a",
+                  }}
+                />
                 <div className="scan" />
                 <div className="cam-head">
                   <div className="cam-name">{c.name}</div>
                   <span className="live">LIVE</span>
                 </div>
                 <div className="cam-foot">
-                  <div className="cam-meta">{c.location} · {c.resolution}</div>
-                  <button style={{ color: "white", opacity: .8 }}><Icon name="expand" size={14} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </React.Fragment>
-      )}
-
-      {/* Locks */}
-      {show("Locks") && (
-        <React.Fragment>
-          <div className="dash-section-head"><h2>Locks & Doors</h2><div className="meta">{devices.locks.filter(l => l.locked).length} of {devices.locks.length} locked</div></div>
-          <div className="dash-grid">
-            {devices.locks.map(l => (
-              <div key={l.id} className={"tile lock " + (l.locked ? "locked" : "unlocked")}>
-                <div className="tile-head">
-                  <div className="row" style={{ alignItems: "flex-start" }}>
-                    <div className={"tile-icon " + (l.locked ? "green" : "red")}>
-                      <Icon name={l.locked ? "lock" : "unlock"} />
-                    </div>
-                    <div>
-                      <div className="tile-name">{l.name}</div>
-                      <div className="tile-room">{l.room}</div>
-                    </div>
-                  </div>
-                  <div className={"tile-toggle" + (l.locked ? " on" : "")} onClick={() => toggleLock(l.id)} />
-                </div>
-                <div className="lock-status">{l.locked ? "Locked" : "Unlocked"}</div>
-                <div className="lock-meta">{l.locked ? `Locked ${l.since}` : `Opened ${l.since}`}</div>
-              </div>
-            ))}
-          </div>
-        </React.Fragment>
-      )}
-
-      {/* Sensors */}
-      {show("Sensors") && (
-        <React.Fragment>
-          <div className="dash-section-head"><h2>Sensors</h2><div className="meta">All normal</div></div>
-          <div className="dash-grid">
-            {devices.sensors.map((s, i) => (
-              <div key={i} className="tile" style={{ minHeight: "auto" }}>
-                <div className="tile-head">
-                  <div className="row" style={{ alignItems: "flex-start" }}>
-                    <div className={"tile-icon " + (s.icColor || "")}><Icon name={s.icon} /></div>
-                    <div>
-                      <div className="tile-name">{s.name}</div>
-                      <div className="tile-room">{s.room}</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="tile-foot">
-                  <div className="val">{s.value}<span className="unit">{s.unit ? " " + s.unit : ""}</span></div>
-                  <div>{s.note}</div>
+                  <div className="cam-meta">{c.id.split(".")[1]}</div>
+                  <button style={{ color: "white", opacity: .8 }}>
+                    <Icon name="expand" size={14} />
+                  </button>
                 </div>
               </div>
             ))}

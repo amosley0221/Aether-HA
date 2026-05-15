@@ -217,6 +217,9 @@ function MusicPage() {
                 <div className="room-meta">
                   <span className="room-name">
                     {room.name}
+                    {room.groupSize > 1 && (
+                      <span className="room-grouped-badge">+{room.groupSize - 1}</span>
+                    )}
                     {room.playing && <Bars />}
                   </span>
                   <span className="room-status">
@@ -232,7 +235,6 @@ function MusicPage() {
                 >
                   <Icon name={room.playing ? "pause" : "play"} size={12} />
                 </button>
-                {room.groupSize > 1 && <span className="room-grouped-badge">+{room.groupSize - 1}</span>}
               </div>
             );
           })}
@@ -515,23 +517,9 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
 
   const top = stack[stack.length - 1];
 
-  // ─── Search input — always rendered on Search tab ─────────────────────
-  const SearchBar = (
-    <div className="lib-search-bar">
-      <Icon name="search" size={14} />
-      <input
-        autoFocus
-        placeholder="Search artists, albums, tracks…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
-    </div>
-  );
-
   if (err) {
     return (
       <div className="lib-body">
-        {tab === "Search" && SearchBar}
         <div className="lib-status">
           <div style={{ color: "#b6432e", fontSize: 14 }}>Error</div>
           <div style={{ marginTop: 6, fontSize: 12 }}>{err}</div>
@@ -540,23 +528,17 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
     );
   }
   if (loading && !top) {
-    return (
-      <div className="lib-body">
-        {tab === "Search" && SearchBar}
-        <div className="lib-status">Loading…</div>
-      </div>
-    );
+    return <div className="lib-body"><div className="lib-status">Loading…</div></div>;
   }
   if (!top) {
     return (
       <div className="lib-body">
-        {tab === "Search" && SearchBar}
         <div className="lib-status" style={{ paddingTop: 40 }}>
           {tab === "Search" ? (
             <>
               <Icon name="search" size={28} />
               <div style={{ marginTop: 12, fontSize: 14 }}>
-                Search artists, albums, tracks, and stations.
+                Use the search bar above to find artists, albums, tracks, and stations.
               </div>
             </>
           ) : "Nothing to show."}
@@ -567,8 +549,6 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
 
   return (
     <div className="lib-body">
-      {tab === "Search" && SearchBar}
-
       <div className="lib-section-head">
         <h3>{top.title}</h3>
         {stack.length > 1 && (
