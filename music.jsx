@@ -40,13 +40,14 @@ function MusicPage() {
   const [userSelectedPrimary, setUserSelectedPrimary] = React.useState(false);
   const [drag, setDrag]       = React.useState(null);
   const [over, setOver]       = React.useState(null);
-  const [tab, setTab]         = React.useState("Library");
+  const [tab, setTab]         = React.useState("Listen Now");
   const [search, setSearch]   = React.useState("");
   const [eqOpen, setEqOpen]   = React.useState(false);
   const [queueOpen, setQueueOpen] = React.useState(false);
 
-  const railRef       = React.useRef(null);
-  const pointerStart  = React.useRef(null);   // {id, x, y}
+  const railRef        = React.useRef(null);
+  const pointerStart   = React.useRef(null);   // {id, x, y}
+  const longPressTimer = React.useRef(null);
 
   // ─── Live room data ──────────────────────────────────────────────────────
   // mediaPlayer (MA wrapper) is the control entity. displayPlayer (Sonos
@@ -165,17 +166,31 @@ function MusicPage() {
   };
 
   // ─── Drag-to-group via Pointer Events (works on mouse + touch) ──────────
-  // HTML5 drag-and-drop doesn't fire on iOS Safari/Chrome. Pointer events do.
-  // Strategy:
-  //   - On pointerdown we record the start position but don't enter drag mode.
-  //   - On document pointermove, if displacement exceeds ~8px, we flip into
-  //     drag mode and start hit-testing the rail's room rectangles.
-  //   - On document pointerup, if drag fired and we're over a target, call
-  //     media_player.join. If pointer never moved enough, treat as a click
-  //     and set primary room.
+  // Strategy that coexists with native horizontal scroll on the rail:
+  //   - On pointerdown, start a 400ms long-press timer.
+  //   - If the user moves more than ~10px before the timer fires, abort
+  //     the timer (they're scrolling or were jittery). Native scroll
+  //     continues unimpeded because touch-action stays at default.
+  //   - If the timer fires (held still long enough), enter drag mode.
+  //     From then on we preventDefault on pointermove so the browser
+  //     stops scrolling, and we hit-test rooms under the pointer.
+  //   - On pointerup with drag+over, fire media_player.join. With no
+  //     drag and no significant movement, treat as a tap and select
+  //     primary.
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
   const onRoomPointerDown = (roomId) => (e) => {
-    if (e.target.closest(".room-ctrl")) return; // clicking play button
-    pointerStart.current = { id: roomId, x: e.clientX, y: e.clientY };
+    if (e.target.closest(".room-ctrl")) return;
+    pointerStart.current = { id: roomId, x: e.clientX, y: e.clientY, time: Date.now() };
+    cancelLongPress();
+    longPressTimer.current = setTimeout(() => {
+      setDrag(roomId);
+    }, 400);
   };
 
   React.useEffect(() => {
@@ -184,11 +199,13 @@ function MusicPage() {
       if (!ps) return;
       const dx = e.clientX - ps.x;
       const dy = e.clientY - ps.y;
-      const dragging = drag || (Math.hypot(dx, dy) > 8 ? ps.id : null);
-      if (dragging && dragging !== drag) setDrag(dragging);
-      if (!dragging) return;
-
-      // Hit-test against rail children
+      if (!drag) {
+        // Cancel the long-press if the user moved enough — they're scrolling
+        if (Math.hypot(dx, dy) > 10) cancelLongPress();
+        return;
+      }
+      // Drag is active — block native scroll and hit-test
+      e.preventDefault();
       if (!railRef.current) return;
       const candidates = railRef.current.querySelectorAll(".room");
       let foundId = null;
@@ -200,10 +217,11 @@ function MusicPage() {
           break;
         }
       }
-      setOver(foundId && foundId !== dragging ? foundId : null);
+      setOver(foundId && foundId !== drag ? foundId : null);
     };
 
     const onUp = async () => {
+      cancelLongPress();
       const ps = pointerStart.current;
       pointerStart.current = null;
       if (drag && over) {
@@ -220,21 +238,31 @@ function MusicPage() {
           }
         }
       } else if (ps && !drag) {
-        // Was a tap, not a drag → treat as room selection
-        setPrimaryId(ps.id);
-        setUserSelectedPrimary(true);
+        // Quick tap (no long-press, no significant movement) → select primary
+        const dt = Date.now() - ps.time;
+        if (dt < 500) {
+          setPrimaryId(ps.id);
+          setUserSelectedPrimary(true);
+        }
       }
       setDrag(null);
       setOver(null);
     };
 
-    document.addEventListener("pointermove",  onMove);
+    const onCancel = () => {
+      cancelLongPress();
+      pointerStart.current = null;
+      setDrag(null);
+      setOver(null);
+    };
+
+    document.addEventListener("pointermove",  onMove, { passive: false });
     document.addEventListener("pointerup",    onUp);
-    document.addEventListener("pointercancel", onUp);
+    document.addEventListener("pointercancel", onCancel);
     return () => {
       document.removeEventListener("pointermove",  onMove);
       document.removeEventListener("pointerup",    onUp);
-      document.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("pointercancel", onCancel);
     };
   }, [drag, over, liveRooms]);
 
@@ -622,11 +650,18 @@ function usePins(hassRef) {
   const addPin = (item) => {
     const id = item.media_content_id;
     if (!id || isPinned(id)) return;
+    // Default unknown items (e.g. search results) to expandable so the click
+    // handler drills into them instead of doing nothing.
+    const canExpand = item.can_expand !== undefined ? item.can_expand : true;
+    const canPlay   = item.can_play   !== undefined ? item.can_play   : true;
     save([...pins, {
       title: item.title || item.name,
       image: item.thumbnail || item.image,
       media_content_id:   id,
       media_content_type: item.media_content_type || item.media_type,
+      thumbnail:          item.thumbnail || item.image,
+      can_expand:         canExpand,
+      can_play:           canPlay,
     }]);
   };
 

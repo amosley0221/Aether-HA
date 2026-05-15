@@ -79,16 +79,26 @@ function DashboardPage() {
     };
   }).filter(c => c.entity);
 
+  // Camera tiles use HA's authenticated entity_picture URL (which already
+  // contains a fresh token). We bump our own tick every 5 minutes so the
+  // thumb image refreshes without needing the camera state to update.
+  const [tileTick, setTileTick] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setTileTick((t) => t + 1), 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const cameras = (cfg.cameras || []).map(id => {
     const s = hass?.states?.[id];
     const a = s?.attributes || {};
+    const base = a.entity_picture || `/api/camera_proxy/${id}`;
+    const sep  = base.includes("?") ? "&" : "?";
     return {
       id, entity: s,
       name: a.friendly_name || id.split(".")[1].replace(/_/g, " "),
-      // HA exposes a camera proxy stream at /api/camera_proxy_stream/<entity_id>
-      // for MJPEG, or /api/camera_proxy/<entity_id> for still images. Use the
-      // still image refreshed every few seconds — works inside HA without auth.
-      thumb: `/api/camera_proxy/${id}`,
+      thumb: `${base}${sep}_t=${tileTick}`,
+      // Re-derive `entity_picture` for the modal to bump independently
+      entityPicture: a.entity_picture,
     };
   }).filter(c => c.entity);
 
@@ -395,9 +405,9 @@ function DashboardPage() {
   );
 }
 
-// Full-size camera live view. Uses HA's still-image proxy and refreshes it
-// every second — works without any auth tokens since we're already inside
-// the HA frontend session.
+// Full-size camera live view. Uses HA's authenticated entity_picture URL and
+// busts cache every second so we get fresh frames. Falls back to the plain
+// camera_proxy URL if entity_picture isn't exposed.
 function CameraDialog({ open, camera, onClose }) {
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => {
@@ -407,16 +417,23 @@ function CameraDialog({ open, camera, onClose }) {
   }, [open]);
 
   if (!open || !camera) return null;
+  const base = camera.entityPicture || `/api/camera_proxy/${camera.id}`;
+  const sep  = base.includes("?") ? "&" : "?";
+  const src  = `${base}${sep}_t=${tick}`;
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>{camera.name} <span style={{ fontSize: 11, color: "#e1314a", marginLeft: 8, letterSpacing: ".14em" }}>● LIVE</span></h3>
+          <h3>
+            {camera.name}
+            <span style={{ fontSize: 11, color: "#e1314a", marginLeft: 8, letterSpacing: ".14em" }}>● LIVE</span>
+          </h3>
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body" style={{ padding: 0, background: "#0a0a0a" }}>
           <img
-            src={`${camera.thumb}?t=${tick}`}
+            src={src}
             alt={camera.name}
             style={{
               display: "block",

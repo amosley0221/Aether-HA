@@ -85,8 +85,10 @@
   cursor: grab;
   flex-shrink: 0;
   position: relative;
-  /* Allow vertical scroll/zoom but reserve horizontal pan for our drag */
-  touch-action: pan-y;
+  /* Default to native touch handling so a horizontal swipe scrolls the
+     rail. Drag-to-group is triggered by a 400ms long-press; once active,
+     we switch touch-action off to capture the gesture. */
+  touch-action: auto;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
