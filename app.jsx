@@ -284,14 +284,16 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
       }
       try {
         if (svc) {
-          // Modern unified TTS service: tts.speak with service entity_id
-          await hass.callService("tts", "speak", {
-            entity_id: svc,
-            media_player_entity_id: mp,
-            message: text,
-          });
+          // Modern tts.speak: TTS service entity goes in TARGET, not data.
+          // Signature: callService(domain, service, serviceData, target)
+          await hass.callService(
+            "tts",
+            "speak",
+            { media_player_entity_id: mp, message: text, cache: true },
+            { entity_id: svc }
+          );
         } else {
-          // Legacy fallback: tts.google_translate_say
+          // Legacy fallback: tts.google_translate_say — target is the player
           await hass.callService("tts", "google_translate_say", {
             entity_id: mp,
             message: text,
