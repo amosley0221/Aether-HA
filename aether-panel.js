@@ -49,10 +49,16 @@
         "--radius-sm:10px",
       ].join(";") + ";";
 
+      // Cache-bust CSS + JSX URLs per-load. The panel module itself is
+      // versioned via configuration.yaml (?v=N on module_url), but the
+      // files that module fetches need their own busting or HA's static
+      // serving caches them indefinitely.
+      const bust = "?_=" + Date.now();
+
       for (const css of ["styles.css", "home.css", "music.css", "dashboard.css"]) {
         const link = document.createElement("link");
         link.rel = "stylesheet";
-        link.href = `${BASE}/${css}`;
+        link.href = `${BASE}/${css}${bust}`;
         this.appendChild(link);
       }
 
@@ -70,12 +76,12 @@
         if (!window.ReactDOM) await loadScript("https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js");
         if (!window.Babel)    await loadScript("https://unpkg.com/@babel/standalone@7.29.0/babel.min.js");
 
-        await loadJsx(`${BASE}/aether-config.js`);
-        await loadJsx(`${BASE}/shared.jsx`);
-        await loadJsx(`${BASE}/home.jsx`);
-        await loadJsx(`${BASE}/music.jsx`);
-        await loadJsx(`${BASE}/dashboard.jsx`);
-        await loadJsx(`${BASE}/app.jsx`);
+        await loadJsx(`${BASE}/aether-config.js${bust}`);
+        await loadJsx(`${BASE}/shared.jsx${bust}`);
+        await loadJsx(`${BASE}/home.jsx${bust}`);
+        await loadJsx(`${BASE}/music.jsx${bust}`);
+        await loadJsx(`${BASE}/dashboard.jsx${bust}`);
+        await loadJsx(`${BASE}/app.jsx${bust}`);
       } catch (err) {
         mount.innerHTML =
           `<pre style="padding:24px;color:#b6432e;font-family:ui-monospace,monospace;">
