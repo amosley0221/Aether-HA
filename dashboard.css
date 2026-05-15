@@ -260,6 +260,40 @@
 .dash-section-head h2 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .dash-section-head .meta { font-size: 12px; color: var(--ink-3); }
 
+/* Edit-mode controls: × on tiles and "Hide section" in section headers */
+.tile-hide {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(20, 24, 31, .85);
+  color: white;
+  border: 0;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  z-index: 5;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  transition: background .12s, transform .12s;
+}
+.tile-hide:hover  { background: #c1432d; transform: scale(1.06); }
+.tile-hide:active { transform: scale(.95); }
+.section-hide-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--paper-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.section-hide-btn:hover { background: #fdecea; color: #c1432d; border-color: rgba(193,67,45,.25); }
+
 /* ─── Mobile overrides ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .dash { padding: 0 14px 32px; gap: 14px; }

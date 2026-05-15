@@ -8,9 +8,62 @@
 function DashboardPage() {
   const hass = useHass();
   const cfg  = window.AETHER_CONFIG;
+  const hassRef = React.useRef(hass);
+  hassRef.current = hass;
 
   const [filter, setFilter] = React.useState("All");
   const [openCamera, setOpenCamera] = React.useState(null);
+  const [editMode, setEditMode] = React.useState(false);
+  const [hiddenOpen, setHiddenOpen] = React.useState(false);
+
+  // ─── Hidden devices + sections, persisted to HA user data ────────────
+  const [hidden, setHidden]       = React.useState({ devices: [], sections: [] });
+  const [hiddenLoaded, setHLoaded] = React.useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let initial = null;
+      try {
+        const r = await hassRef.current?.callWS({
+          type: "frontend/get_user_data",
+          key:  "aether_hidden",
+        });
+        if (r?.value && typeof r.value === "object") initial = r.value;
+      } catch {}
+      if (initial == null) {
+        try {
+          const stored = localStorage.getItem("aether_hidden");
+          if (stored) initial = JSON.parse(stored);
+        } catch {}
+      }
+      if (!cancelled) {
+        setHidden({
+          devices:  Array.isArray(initial?.devices)  ? initial.devices  : [],
+          sections: Array.isArray(initial?.sections) ? initial.sections : [],
+        });
+        setHLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveHidden = async (next) => {
+    setHidden(next);
+    try { localStorage.setItem("aether_hidden", JSON.stringify(next)); } catch {}
+    try {
+      await hassRef.current?.callWS({
+        type: "frontend/set_user_data",
+        key:  "aether_hidden",
+        value: next,
+      });
+    } catch {}
+  };
+  const hideDevice  = (id)   => saveHidden({ ...hidden, devices:  [...new Set([...hidden.devices,  id])]   });
+  const showDevice  = (id)   => saveHidden({ ...hidden, devices:  hidden.devices.filter(x => x !== id)     });
+  const hideSection = (name) => saveHidden({ ...hidden, sections: [...new Set([...hidden.sections, name])] });
+  const showSection = (name) => saveHidden({ ...hidden, sections: hidden.sections.filter(x => x !== name)  });
+  const isHidden    = (id)   => hidden.devices.includes(id);
+  const isHiddenSec = (name) => hidden.sections.includes(name);
 
   // ─── Live device lists from config + hass state ─────────────────────────
   const lightEntries = React.useMemo(() => {
@@ -62,6 +115,11 @@ function DashboardPage() {
   }, [hass, cfg.rooms]);
 
   const playingCount = rooms.filter(r => r.playing).length;
+
+  // Visible (post-hidden-filter) lists used for rendering. Counts for the
+  // filter pills also reflect what's actually visible.
+  const visLights  = lightEntries.filter(l => !isHidden(l.id));
+  const visRooms   = rooms.filter(r => !isHidden(r.mediaPlayer) && !isHidden(r.id));
 
   const climates = (cfg.climate || []).map(id => {
     const s = hass?.states?.[id];
@@ -121,6 +179,10 @@ function DashboardPage() {
     };
   }).filter(c => c.entity);
 
+  // Post-filter visible arrays for rendering
+  const vCameras  = cameras.filter(c => !isHidden(c.id));
+  const vClimates = climates.filter(c => !isHidden(c.id));
+
   // ─── Service helpers ────────────────────────────────────────────────────
   const svc = (service, data) => callService(hass, service, data);
 
@@ -163,14 +225,16 @@ function DashboardPage() {
   };
 
   // ─── Filters ────────────────────────────────────────────────────────────
+  // Counts and visibility reflect post-hidden lists. A section is only
+  // rendered if not in hidden.sections AND it has at least one visible item.
   const filters = [
-    { key: "All",      icon: "grid",    count: lightEntries.length + cameras.length + climates.length + rooms.length },
-    { key: "Lights",   icon: "bulb",    count: lightEntries.length },
-    { key: "Cameras",  icon: "camera",  count: cameras.length },
-    { key: "Climate",  icon: "thermo",  count: climates.length },
-    { key: "Speakers", icon: "speaker", count: rooms.length },
+    { key: "All",      icon: "grid",    count: visLights.length + vCameras.length + vClimates.length + visRooms.length },
+    { key: "Lights",   icon: "bulb",    count: visLights.length },
+    { key: "Cameras",  icon: "camera",  count: vCameras.length },
+    { key: "Climate",  icon: "thermo",  count: vClimates.length },
+    { key: "Speakers", icon: "speaker", count: visRooms.length },
   ];
-  const show = (cat) => filter === "All" || filter === cat;
+  const show = (cat) => (filter === "All" || filter === cat) && !isHiddenSec(cat);
 
   if (!hass) {
     return <div className="page dash" style={{ padding: 40 }}>Connecting to Home Assistant…</div>;
@@ -193,6 +257,18 @@ function DashboardPage() {
         <button className="q" onClick={goodnight}>
           <Icon name="moon" size={14} /> Goodnight
         </button>
+        <button
+          className={"q" + (editMode ? " on" : "")}
+          onClick={() => setEditMode(!editMode)}
+          style={{ marginLeft: "auto" }}
+        >
+          <Icon name={editMode ? "lock" : "settings"} size={14} /> {editMode ? "Done" : "Edit"}
+        </button>
+        {hiddenLoaded && (hidden.devices.length > 0 || hidden.sections.length > 0) && (
+          <button className="q" onClick={() => setHiddenOpen(true)}>
+            Hidden · {hidden.devices.length + hidden.sections.length}
+          </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -210,15 +286,23 @@ function DashboardPage() {
       </div>
 
       {/* Lights */}
-      {show("Lights") && lightEntries.length > 0 && (
+      {show("Lights") && visLights.length > 0 && (
         <React.Fragment>
           <div className="dash-section-head">
             <h2>Lights</h2>
-            <div className="meta">{lightsOn} of {lightEntries.length} on</div>
+            <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span>{visLights.filter(l => l.on).length} of {visLights.length} on</span>
+              {editMode && (
+                <button className="section-hide-btn" onClick={() => hideSection("Lights")}>Hide section</button>
+              )}
+            </div>
           </div>
           <div className="dash-grid">
-            {lightEntries.map(l => (
+            {visLights.map(l => (
               <div key={l.id} className={"tile light" + (l.on ? " on" : "")}>
+                {editMode && (
+                  <button className="tile-hide" onClick={(e) => { e.stopPropagation(); hideDevice(l.id); }} aria-label="Hide">×</button>
+                )}
                 <div className="bulb-glow" style={{ background: `radial-gradient(circle, ${l.color}80, transparent 60%)` }} />
                 <div className="tile-head">
                   <div className="row" style={{ alignItems: "flex-start" }}>
@@ -253,15 +337,23 @@ function DashboardPage() {
       )}
 
       {/* Speakers */}
-      {show("Speakers") && rooms.length > 0 && (
+      {show("Speakers") && visRooms.length > 0 && (
         <React.Fragment>
           <div className="dash-section-head">
             <h2>Speakers</h2>
-            <div className="meta">{playingCount} playing</div>
+            <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span>{visRooms.filter(r => r.playing).length} playing</span>
+              {editMode && (
+                <button className="section-hide-btn" onClick={() => hideSection("Speakers")}>Hide section</button>
+              )}
+            </div>
           </div>
           <div className="dash-grid">
-            {rooms.map(r => (
+            {visRooms.map(r => (
               <div key={r.id} className="tile speaker">
+                {editMode && (
+                  <button className="tile-hide" onClick={(e) => { e.stopPropagation(); hideDevice(r.mediaPlayer); }} aria-label="Hide">×</button>
+                )}
                 <div className="tile-head">
                   <div className="row" style={{ alignItems: "flex-start" }}>
                     <Avatar colors={r.color} size={38} />
@@ -317,22 +409,28 @@ function DashboardPage() {
       )}
 
       {/* Climate */}
-      {show("Climate") && climates.length > 0 && (
+      {show("Climate") && vClimates.length > 0 && (
         <React.Fragment>
           <div className="dash-section-head">
             <h2>Climate</h2>
-            <div className="meta">
-              {climates.map(c => `${c.mode} · ${c.current ?? "—"}°`).join(" · ")}
+            <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span>{vClimates.map(c => `${c.mode} · ${c.current ?? "—"}°`).join(" · ")}</span>
+              {editMode && (
+                <button className="section-hide-btn" onClick={() => hideSection("Climate")}>Hide section</button>
+              )}
             </div>
           </div>
           <div className="dash-grid">
-            {climates.map(c => {
+            {vClimates.map(c => {
               const pct = c.target != null
                 ? (c.target - c.min) / (c.max - c.min)
                 : 0;
               const C = 2 * Math.PI * 56;
               return (
                 <div key={c.id} className="tile thermo">
+                  {editMode && (
+                    <button className="tile-hide" onClick={(e) => { e.stopPropagation(); hideDevice(c.id); }} aria-label="Hide">×</button>
+                  )}
                   <div className="tile-head">
                     <div className="row" style={{ alignItems: "flex-start" }}>
                       <div className="tile-icon warm"><Icon name="thermo" /></div>
@@ -371,21 +469,29 @@ function DashboardPage() {
       )}
 
       {/* Cameras */}
-      {show("Cameras") && cameras.length > 0 && (
+      {show("Cameras") && vCameras.length > 0 && (
         <React.Fragment>
           <div className="dash-section-head">
             <h2>Cameras</h2>
-            <div className="meta">All live</div>
+            <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span>All live</span>
+              {editMode && (
+                <button className="section-hide-btn" onClick={() => hideSection("Cameras")}>Hide section</button>
+              )}
+            </div>
           </div>
           <div className="dash-grid">
-            {cameras.map(c => (
+            {vCameras.map(c => (
               <div
                 key={c.id}
                 className="tile camera"
-                onClick={() => setOpenCamera(c)}
+                onClick={() => !editMode && setOpenCamera(c)}
                 role="button"
                 title={`Open ${c.name}`}
               >
+                {editMode && (
+                  <button className="tile-hide" onClick={(e) => { e.stopPropagation(); hideDevice(c.id); }} aria-label="Hide">×</button>
+                )}
                 <div
                   className="feed"
                   style={{
@@ -421,15 +527,87 @@ function DashboardPage() {
         hass={hass}
         onClose={() => setOpenCamera(null)}
       />
+
+      <HiddenManagerDialog
+        open={hiddenOpen}
+        onClose={() => setHiddenOpen(false)}
+        hidden={hidden}
+        hass={hass}
+        showDevice={showDevice}
+        showSection={showSection}
+      />
     </div>
   );
 }
 
-// Full-size camera live view. Re-signs the camera_proxy path every 2 seconds
-// so each requested image carries a valid auth signature. Falls back to the
-// entity_picture URL if auth/sign_path is unavailable.
+// Lists every device/section currently hidden so the user can bring
+// them back. Friendly names come from hass.states attributes.
+function HiddenManagerDialog({ open, onClose, hidden, hass, showDevice, showSection }) {
+  if (!open) return null;
+  const sections = hidden.sections || [];
+  const devices  = (hidden.devices || []).map((id) => ({
+    id,
+    name: hass?.states?.[id]?.attributes?.friendly_name
+       || id.split(".")[1]?.replace(/_/g, " ")
+       || id,
+  }));
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Hidden items</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body">
+          {sections.length === 0 && devices.length === 0 ? (
+            <div className="lib-status">Nothing hidden.</div>
+          ) : (
+            <>
+              {sections.length > 0 && (
+                <>
+                  <div style={{
+                    fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em",
+                    color: "var(--ink-3)", fontWeight: 600, marginBottom: 8,
+                  }}>Sections</div>
+                  {sections.map((s) => (
+                    <div key={s} className="eq-row">
+                      <span className="eq-label">{s}</span>
+                      <button className="modal-btn" onClick={() => showSection(s)}>Show</button>
+                    </div>
+                  ))}
+                </>
+              )}
+              {devices.length > 0 && (
+                <>
+                  <div style={{
+                    fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em",
+                    color: "var(--ink-3)", fontWeight: 600, marginTop: 16, marginBottom: 8,
+                  }}>Devices</div>
+                  {devices.map((d) => (
+                    <div key={d.id} className="eq-row">
+                      <span className="eq-label">{d.name}</span>
+                      <button className="modal-btn" onClick={() => showDevice(d.id)}>Show</button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Full-size camera live view. Re-signs the camera_proxy path every 30 s
+// (the sign_path token expires in 60 s) and bumps a cache-bust tick every
+// second so the image actually re-fetches. Uses a CSS background-image
+// (same approach as the dashboard tiles that work) instead of an <img>
+// tag — iOS Safari sometimes refuses to load camera_proxy URLs via <img>.
 function CameraDialog({ open, camera, hass, onClose }) {
-  const [src, setSrc] = React.useState("");
+  const [signedUrl, setSignedUrl] = React.useState("");
+  const [tick, setTick] = React.useState(0);
 
   React.useEffect(() => {
     if (!open || !camera || !hass) return;
@@ -439,26 +617,29 @@ function CameraDialog({ open, camera, hass, onClose }) {
         const r = await hass.callWS({
           type: "auth/sign_path",
           path: camera.proxyPath || `/api/camera_proxy/${camera.id}`,
-          expires: 30,
+          expires: 60,
         });
-        if (!cancelled && r?.path) {
-          // Append a bust param so the <img> actually re-fetches when the
-          // signed path itself happens to be unchanged within the window.
-          setSrc(r.path + (r.path.includes("?") ? "&" : "?") + "_t=" + Date.now());
-        }
+        if (!cancelled && r?.path) setSignedUrl(r.path);
       } catch {
         if (!cancelled) {
-          const base = camera.thumb || `/api/camera_proxy/${camera.id}`;
-          setSrc(base + (base.includes("?") ? "&" : "?") + "_t=" + Date.now());
+          setSignedUrl(camera.thumb || `/api/camera_proxy/${camera.id}`);
         }
       }
     };
     sign();
-    const id = setInterval(sign, 2000);
-    return () => { cancelled = true; clearInterval(id); };
+    const signId = setInterval(sign, 30 * 1000);
+    const tickId = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(signId);
+      clearInterval(tickId);
+    };
   }, [open, camera, hass]);
 
   if (!open || !camera) return null;
+  const src = signedUrl
+    ? signedUrl + (signedUrl.includes("?") ? "&" : "?") + "_t=" + tick
+    : "";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -471,26 +652,25 @@ function CameraDialog({ open, camera, hass, onClose }) {
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body" style={{ padding: 0, background: "#0a0a0a" }}>
-          {src ? (
-            <img
-              src={src}
-              alt={camera.name}
-              style={{
-                display: "block",
-                width: "100%",
-                maxHeight: "70vh",
-                objectFit: "contain",
-                background: "#0a0a0a",
-              }}
-            />
-          ) : (
-            <div style={{
-              minHeight: 360, display: "grid", placeItems: "center",
-              color: "#777", background: "#0a0a0a",
-            }}>
-              Loading stream…
-            </div>
-          )}
+          <div
+            style={{
+              width: "100%",
+              minHeight: 360,
+              aspectRatio: "16 / 9",
+              maxHeight: "70vh",
+              backgroundImage: src ? `url('${src}')` : "none",
+              backgroundColor: "#0a0a0a",
+              backgroundSize: "contain",
+              backgroundRepeat: "no-repeat",
+              backgroundPosition: "center",
+              display: src ? "block" : "grid",
+              placeItems: "center",
+              color: "#777",
+              fontSize: 13,
+            }}
+          >
+            {!src && "Loading stream…"}
+          </div>
         </div>
       </div>
     </div>
