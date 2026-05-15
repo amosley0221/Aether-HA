@@ -1121,6 +1121,7 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
       // usually 'mixer') OR on the internal ModelScene. We try several
       // access paths and fall back to a deep walk.
       let mixer = null;
+      let scene = null;
 
       // Strategy 1: direct mv symbol whose description contains "mixer"
       for (const sym of Object.getOwnPropertySymbols(mv)) {
@@ -1141,20 +1142,22 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
       if (!mixer) {
         for (const sym of Object.getOwnPropertySymbols(mv)) {
           try {
-            const scene = mv[sym];
-            if (!scene || typeof scene !== "object") continue;
-            if (scene.mixer && Array.isArray(scene.mixer._actions)) {
-              mixer = scene.mixer;
+            const obj = mv[sym];
+            if (!obj || typeof obj !== "object") continue;
+            if (obj.mixer && Array.isArray(obj.mixer._actions)) {
+              mixer = obj.mixer;
+              scene = obj;
               console.log("[aether] mixer via scene[", sym.description || "?", "].mixer");
               break;
             }
-            for (const subSym of Object.getOwnPropertySymbols(scene)) {
+            for (const subSym of Object.getOwnPropertySymbols(obj)) {
               const subDesc = subSym.description || subSym.toString();
               if (!/mixer/i.test(subDesc)) continue;
               try {
-                const m = scene[subSym];
+                const m = obj[subSym];
                 if (m && Array.isArray(m._actions)) {
                   mixer = m;
+                  scene = obj;
                   console.log("[aether] mixer via nested symbol:", subDesc);
                   break;
                 }
@@ -1188,7 +1191,50 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
         try { walk(mv, 0); } catch {}
       }
 
-      const clips = mv?.model?.animations;
+      // ── Locate the AnimationClip[] array. Tried in order:
+      //   1. mv.model.animations (public API, sometimes empty in v4)
+      //   2. scene.animations / scene.model.animations
+      //   3. mixer._root.animations / walked tree under the mixer root
+      //   4. last resort: walk mv looking for any .animations array
+      let clips = null;
+      const probeForClips = () => {
+        try {
+          if (Array.isArray(mv?.model?.animations) && mv.model.animations.length) return mv.model.animations;
+        } catch {}
+        try {
+          if (Array.isArray(scene?.animations) && scene.animations.length) return scene.animations;
+        } catch {}
+        try {
+          if (Array.isArray(scene?.model?.animations) && scene.model.animations.length) return scene.model.animations;
+        } catch {}
+        try {
+          if (Array.isArray(mixer?._root?.animations) && mixer._root.animations.length) return mixer._root.animations;
+        } catch {}
+        // Deep search for any .animations array of valid clips
+        const seenC = new WeakSet();
+        const findInTree = (obj, depth) => {
+          if (!obj || typeof obj !== "object" || seenC.has(obj) || depth > 8) return null;
+          seenC.add(obj);
+          if (Array.isArray(obj.animations) && obj.animations.length > 0 &&
+              obj.animations[0] && typeof obj.animations[0].duration === "number") {
+            return obj.animations;
+          }
+          let keys = [];
+          try { keys.push(...Object.getOwnPropertyNames(obj)); } catch {}
+          try { keys.push(...Object.getOwnPropertySymbols(obj)); } catch {}
+          for (const k of keys) {
+            try {
+              const c = findInTree(obj[k], depth + 1);
+              if (c) return c;
+            } catch {}
+          }
+          return null;
+        };
+        return findInTree(mv, 0);
+      };
+      clips = probeForClips();
+      console.log("[aether] clips found:", clips?.length || 0, clips?.map?.((c) => c.name) || []);
+
       if (mixer && Array.isArray(clips) && clips.length > 0) {
         console.log("[aether] multi-anim mode — building action map");
         const acts = {};
@@ -1209,7 +1255,7 @@ function CarModel3D({ src, alt, doors, frunk, trunk, chargePort }) {
         }
         setActions(acts);
       } else {
-        console.log("[aether] single-anim mode (mixer not found or no clips)");
+        console.log("[aether] single-anim mode (mixer:", !!mixer, ", clips:", clips?.length || 0, ")");
         setActions(null);
       }
     };
