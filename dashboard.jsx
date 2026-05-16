@@ -1294,17 +1294,20 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
 
   const volumeLevel = Math.round(((vol?.attributes?.volume_level) ?? 0) * 100);
   const volumeMuted = !!vol?.attributes?.is_volume_muted;
-  const title       = mp?.attributes?.media_title || currentAppName || (off ? "Off" : "Apple TV");
-  const subtitle    = [mp?.attributes?.media_artist, mp?.attributes?.media_album_name]
-                        .filter(Boolean).join(" · ")
-                      || (currentSource && currentSource !== title ? currentSource : "");
+  // The Apple TV integration's app_id / app_name attributes can lag well
+  // behind reality (often stuck on whatever app was open last), so we
+  // don't surface them — better blank than wrong. media_title is more
+  // reliable when something is actively playing.
+  const title    = mp?.attributes?.media_title || (off ? "Off" : "Apple TV");
+  const subtitle = [mp?.attributes?.media_artist, mp?.attributes?.media_album_name]
+                     .filter(Boolean).join(" · ");
 
   return (
     <>
       <div className="dash-section-head">
         <h2>Apple TV</h2>
         <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span>{off ? "Off" : (playing ? "Playing" : currentAppName || "Idle")}</span>
+          <span>{off ? "Off" : (playing ? "Playing" : "On")}</span>
           {editMode && (
             <button className="section-hide-btn" onClick={onHideSection}>Hide section</button>
           )}
@@ -1346,14 +1349,11 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
         <div className="atv-apps-grid">
           {apps.map(app => {
             const exists = !app.source || installed.length === 0 || installed.includes(app.source);
-            const active = (app.bundleId && app.bundleId === currentAppId) ||
-                           (app.source   && app.source   === currentSource) ||
-                           (app.name     && app.name     === currentAppName);
             const icon = resolveAppIcon(app);
             return (
               <button
                 key={app.name}
-                className={"atv-app-tile" + (active ? " active" : "")}
+                className="atv-app-tile"
                 onClick={() => launchApp(app)}
                 disabled={!exists}
                 title={exists ? `Launch ${app.name}` : `${app.source} not found in Apple TV's source list`}
