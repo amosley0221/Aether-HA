@@ -2,6 +2,11 @@
 .dash {
   padding: 0 28px 40px;
   display: grid;
+  /* Single column constrained to parent width. Without minmax(0, 1fr)
+     the implicit grid track auto-sizes to its widest child's max-content,
+     which lets the filter row / car stats push the whole dashboard
+     wider than the viewport on foldables and portrait tablets. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   max-width: 1500px;
   margin: 0 auto;
@@ -36,13 +41,10 @@
   padding: 4px;
   background: rgba(255,255,255,.6);
   border: 1px solid var(--hairline);
-  border-radius: 999px;
+  border-radius: 22px;
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  flex-wrap: wrap;
 }
-.dash-filters::-webkit-scrollbar { display: none; }
 .dash-filter {
   font-size: 13px; padding: 7px 14px; border-radius: 999px;
   color: var(--ink-3); transition: all .15s;
@@ -505,13 +507,7 @@
     flex: 1 1 auto; justify-content: center;
   }
 
-  .dash-filters {
-    width: 100%;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    scrollbar-width: none;
-  }
-  .dash-filters::-webkit-scrollbar { display: none; }
+  .dash-filters { width: 100%; flex-wrap: wrap; }
   .dash-filter { font-size: 12px; padding: 6px 11px; flex-shrink: 0; }
 
   .dash-grid { grid-template-columns: 1fr; gap: 10px; }

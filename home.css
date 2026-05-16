@@ -2,6 +2,7 @@
 .home {
   padding: 0 28px 40px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   max-width: 1500px;
   margin: 0 auto;
