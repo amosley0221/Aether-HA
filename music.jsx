@@ -222,17 +222,25 @@ function MusicPage() {
 
   const finishDrag = async () => {
     cancelLongPress();
+    stopEdgeScroll();
     const ps = pointerStart.current;
     pointerStart.current = null;
     const { drag: curDrag, over: curOver } = dragStateRef.current;
     if (curDrag && curOver) {
       const dragged = liveRooms.find(r => r.id === curDrag);
       const target  = liveRooms.find(r => r.id === curOver);
-      if (dragged?.entityId && target?.entityId) {
+      // Prefer the bare Sonos / native integration entity for join: the
+      // Sonos integration handles native multi-room grouping, while the
+      // MA wrapper's join can be a no-op depending on MA version. Fall
+      // back to entityId (MA wrapper) for non-Sonos rooms.
+      const targetJoinId  = target?.displayId  || target?.entityId;
+      const draggedJoinId = dragged?.displayId || dragged?.entityId;
+      if (draggedJoinId && targetJoinId) {
+        console.log("[aether] joining", draggedJoinId, "→", targetJoinId);
         try {
           await svc("media_player.join", {
-            entity_id: target.entityId,
-            group_members: [dragged.entityId],
+            entity_id: targetJoinId,
+            group_members: [draggedJoinId],
           });
         } catch (err) {
           console.warn("[aether] media_player.join failed:", err);
@@ -262,6 +270,52 @@ function MusicPage() {
     beginPress(roomId, e.clientX, e.clientY);
   };
 
+  // Edge auto-scroll while dragging. Native horizontal scroll on the rail
+  // is disabled mid-drag (we preventDefault touchmove), so if the user
+  // drags toward the rail's left/right edge we scroll programmatically
+  // each frame to reveal off-screen rooms.
+  const edgeScrollRAF = React.useRef(null);
+  const edgeScrollVel = React.useRef(0);
+  const stopEdgeScroll = () => {
+    if (edgeScrollRAF.current) {
+      cancelAnimationFrame(edgeScrollRAF.current);
+      edgeScrollRAF.current = null;
+    }
+    edgeScrollVel.current = 0;
+  };
+  const updateEdgeScroll = (clientX) => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const rect = rail.getBoundingClientRect();
+    const edge = 60;        // px from edge where auto-scroll engages
+    const maxSpeed = 14;    // px per frame at the very edge
+    let vel = 0;
+    if (clientX < rect.left + edge) {
+      vel = -maxSpeed * Math.min(1, (rect.left + edge - clientX) / edge);
+    } else if (clientX > rect.right - edge) {
+      vel =  maxSpeed * Math.min(1, (clientX - (rect.right - edge)) / edge);
+    }
+    edgeScrollVel.current = vel;
+    if (vel !== 0 && !edgeScrollRAF.current) {
+      const tick = () => {
+        const v = edgeScrollVel.current;
+        if (!v || !railRef.current) { edgeScrollRAF.current = null; return; }
+        railRef.current.scrollLeft += v;
+        // While auto-scrolling, re-hit-test under the current finger position
+        // since rooms slide under it without further touchmove events.
+        const last = lastPointer.current;
+        if (last) updateOver(last.x, last.y);
+        edgeScrollRAF.current = requestAnimationFrame(tick);
+      };
+      edgeScrollRAF.current = requestAnimationFrame(tick);
+    } else if (vel === 0 && edgeScrollRAF.current) {
+      cancelAnimationFrame(edgeScrollRAF.current);
+      edgeScrollRAF.current = null;
+    }
+  };
+
+  const lastPointer = React.useRef(null);
+
   React.useEffect(() => {
     const onTouchMove = (e) => {
       const ps = pointerStart.current;
@@ -275,7 +329,9 @@ function MusicPage() {
         return;
       }
       e.preventDefault();
+      lastPointer.current = { x: t.clientX, y: t.clientY };
       updateOver(t.clientX, t.clientY);
+      updateEdgeScroll(t.clientX);
     };
     const onTouchEnd  = () => { finishDrag(); };
     const onTouchCancel = () => {
@@ -298,7 +354,9 @@ function MusicPage() {
         return;
       }
       e.preventDefault();
+      lastPointer.current = { x: e.clientX, y: e.clientY };
       updateOver(e.clientX, e.clientY);
+      updateEdgeScroll(e.clientX);
     };
     const onMouseUp = () => { finishDrag(); };
 
@@ -313,6 +371,7 @@ function MusicPage() {
       document.removeEventListener("touchcancel", onTouchCancel);
       document.removeEventListener("mousemove",  onMouseMove);
       document.removeEventListener("mouseup",    onMouseUp);
+      stopEdgeScroll();
     };
   }, [liveRooms]);
 
