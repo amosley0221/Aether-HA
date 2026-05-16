@@ -1099,6 +1099,8 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
   const apps = tv.apps || [];
   const installed = mp?.attributes?.source_list || [];
   const currentSource = mp?.attributes?.source;
+  const currentAppId  = mp?.attributes?.app_id;
+  const currentAppName = mp?.attributes?.app_name;
 
   const playing = mp?.state === "playing";
   const off     = remote?.state === "off" || mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable";
@@ -1110,12 +1112,24 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
         { entity_id: remoteId, command: cmd });
     } catch (e) { console.warn("[aether tv] send_command failed:", e); }
   };
-  const launchApp = async (sourceName) => {
+  // App launch path: modern Apple TV integration (pyatv) doesn't expose
+  // a switchable source_list. Use media_player.play_media with the iOS
+  // bundle ID instead — that's the supported way to launch apps.
+  // Falls back to select_source if the app entry only has `source`.
+  const launchApp = async (app) => {
     if (!mpId) return;
     try {
-      await callService(hass, "media_player.select_source",
-        { entity_id: mpId, source: sourceName });
-    } catch (e) { console.warn("[aether tv] select_source failed:", e); }
+      if (app.bundleId) {
+        await callService(hass, "media_player.play_media", {
+          entity_id: mpId,
+          media_content_type: "app",
+          media_content_id: app.bundleId,
+        });
+      } else if (app.source) {
+        await callService(hass, "media_player.select_source",
+          { entity_id: mpId, source: app.source });
+      }
+    } catch (e) { console.warn("[aether tv] launch failed:", e); }
   };
   const togglePower = async () => {
     if (!mpId) return;
@@ -1188,13 +1202,18 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
 
           <div className="atv-apps">
             {apps.map(app => {
-              const exists = installed.length === 0 || installed.includes(app.source);
-              const active = currentSource === app.source;
+              // If source_list is populated, we can pre-check; otherwise
+              // we trust the config (bundle-ID launches work even when
+              // source_list is empty).
+              const exists = !app.source || installed.length === 0 || installed.includes(app.source);
+              const active = (app.bundleId && app.bundleId === currentAppId) ||
+                             (app.source   && app.source   === currentSource) ||
+                             (app.name     && app.name     === currentAppName);
               return (
                 <button
                   key={app.name}
                   className={"atv-app" + (active ? " active" : "")}
-                  onClick={() => launchApp(app.source)}
+                  onClick={() => launchApp(app)}
                   disabled={!exists}
                   title={exists ? `Launch ${app.name}` : `${app.source} not found in Apple TV's source list`}
                 >

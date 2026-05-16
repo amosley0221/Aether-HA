@@ -244,22 +244,27 @@ const AETHER_CONFIG = {
   // Sonos soundbar the Apple TV is plugged into (Playbase / Arc / Beam),
   // since the Apple TV's own volume calls go through HDMI-CEC.
   //
-  // `apps`: each entry's `source` must exactly match the human-readable
-  // app name as it appears in the Apple TV's installed-apps list (you
-  // can verify in HA → Developer Tools → States →
-  // media_player.<your_apple_tv> → attributes.source_list). Leave the
-  // whole `appleTV` block out (or set remote/mediaPlayer to null) to
-  // hide the section.
+  // `apps`: each entry needs EITHER:
+  //   bundleId — iOS bundle identifier (preferred; works with the
+  //              modern pyatv-based Apple TV integration which doesn't
+  //              populate source_list). Find an app's bundle ID by
+  //              opening it on the Apple TV, then check
+  //              media_player.<your_atv> → attributes.app_id in HA
+  //              Developer Tools → States.
+  //   source   — the exact string from attributes.source_list (older
+  //              integrations only). Used as a fallback.
+  // Leave the whole `appleTV` block out (or set remote/mediaPlayer to
+  // null) to hide the section.
   appleTV: {
-    remote:       "remote.living_room",                 // e.g. remote.living_room_apple_tv
-    mediaPlayer:  "media_player.living_room_apple_tv",  // Apple TV media_player
+    remote:       "remote.living_room",                 // Apple TV remote entity
+    mediaPlayer:  "media_player.living_room_4",         // Apple TV media_player
     volumePlayer: "media_player.living_room",           // Sonos Playbase
     apps: [
-      { name: "Netflix",    source: "Netflix" },
-      { name: "YouTube TV", source: "YouTube TV" },
-      { name: "YouTube",    source: "YouTube" },
-      { name: "Twitch",     source: "Twitch" },
-      { name: "Plex",       source: "Plex" },
+      { name: "Netflix",    bundleId: "com.netflix.Netflix" },
+      { name: "YouTube TV", bundleId: "com.google.ios.youtubeunplugged" },
+      { name: "YouTube",    bundleId: "com.google.ios.youtube" },
+      { name: "Twitch",     bundleId: "tv.twitch" },
+      { name: "Plex",       bundleId: "com.plexapp.plex" },
     ],
   },
 
