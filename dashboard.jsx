@@ -1083,11 +1083,158 @@ function CarSection({ car, hass, editMode, onHideSection }) {
 }
 
 // ─── Apple TV remote ──────────────────────────────────────────────────────
-// Controls an Apple TV via HA's Apple TV integration. D-pad + select +
-// menu/home/play/Siri go through remote.send_command. App shortcuts
-// launch via media_player.select_source (the integration registers each
-// installed app as a selectable source). Volume slider drives the
-// configured speaker (usually the Sonos soundbar the ATV outputs to).
+// Controls an Apple TV via HA's Apple TV integration. Trackpad swipes
+// translate into discrete d-pad commands (one step per ~40px of motion);
+// tapping the pad fires `select`. App shortcuts launch via
+// media_player.play_media with the iOS bundle ID, which is the
+// pyatv-supported path even when source_list is empty. Volume slider
+// drives the configured speaker (usually the Sonos soundbar the ATV
+// outputs to via HDMI ARC).
+
+// Brand-color tile glyphs for popular Apple TV apps. Keyed primarily by
+// bundle ID; named keys (lowercase) act as a fallback so the lookup
+// still works for entries that only specify `source` or for custom
+// `iconKey` overrides.
+const TV_APP_ICONS = {
+  "com.netflix.netflix": {
+    bg: "#000000",
+    glyph: (
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 2v20l3-.4v-9.2L14.5 22 18 21.5V2l-3 .4v9.2L9.4 2 6 2z" fill="#E50914"/></svg>
+    ),
+  },
+  "com.google.ios.youtube": {
+    bg: "#ffffff",
+    glyph: (
+      <svg viewBox="0 0 24 24" width="22" height="22"><rect x="2" y="6" width="20" height="12" rx="4" fill="#FF0000"/><path d="M10 9.5v5l4.5-2.5z" fill="white"/></svg>
+    ),
+    border: "1px solid #e5e7eb",
+  },
+  "com.google.ios.youtubeunplugged": {
+    bg: "#ffffff",
+    glyph: (
+      <svg viewBox="0 0 24 24" width="22" height="22"><rect x="2" y="6" width="20" height="12" rx="4" fill="#FF0000"/><path d="M9 9.5v5l4-2.5z" fill="white"/><text x="14.5" y="14.5" font-size="5.5" font-weight="700" fill="white" font-family="-apple-system,Helvetica,Arial">TV</text></svg>
+    ),
+    border: "1px solid #e5e7eb",
+  },
+  "tv.twitch": {
+    bg: "#9146FF",
+    glyph: (
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4v14h4v3l3-3h4l5-5V4H4zm14 8l-3 3h-3l-3 3v-3H6V6h12v6zm-7-5v5m4-5v5" fill="none" stroke="white" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/></svg>
+    ),
+  },
+  "com.plexapp.plex": {
+    bg: "#1F2326",
+    glyph: (
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M5 3l7 9-7 9h5l7-9-7-9z" fill="#EBAF00"/></svg>
+    ),
+  },
+  "com.apple.tvairplayreceiver": {
+    bg: "#0a84ff",
+    glyph: <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 15h12l-6-7z" fill="white"/></svg>,
+  },
+  // Named fallbacks (lowercase) — match if config doesn't provide bundleId
+  netflix:   { ref: "com.netflix.netflix" },
+  youtube:   { ref: "com.google.ios.youtube" },
+  "youtube tv": { ref: "com.google.ios.youtubeunplugged" },
+  twitch:    { ref: "tv.twitch" },
+  plex:      { ref: "com.plexapp.plex" },
+};
+
+function resolveAppIcon(app) {
+  const tryKeys = [
+    app.iconKey,
+    (app.bundleId || "").toLowerCase(),
+    (app.name || "").toLowerCase(),
+  ].filter(Boolean);
+  for (const k of tryKeys) {
+    const hit = TV_APP_ICONS[k];
+    if (!hit) continue;
+    if (hit.ref) return TV_APP_ICONS[hit.ref] || null;
+    return hit;
+  }
+  return null;
+}
+
+// Trackpad: maps swipe gestures to discrete remote d-pad commands.
+// Each ~40px of motion in a dominant axis fires one step; resetting
+// the origin after each step lets a single long swipe send multiple
+// presses (mirrors the Siri Remote app on iPhone). A short tap with
+// no movement fires `select`.
+function TVTrackpad({ onCmd, onSelect }) {
+  const start  = React.useRef(null);
+  const origin = React.useRef(null);
+  const lastDir = React.useRef(null);
+  const STEP = 40;
+  const TAP_MAX_DIST = 12;
+  const TAP_MAX_MS   = 350;
+
+  const begin = (x, y) => {
+    start.current  = { x, y, t: Date.now() };
+    origin.current = { x, y };
+    lastDir.current = null;
+  };
+  const move = (x, y) => {
+    if (!origin.current) return;
+    const dx = x - origin.current.x;
+    const dy = y - origin.current.y;
+    const ax = Math.abs(dx), ay = Math.abs(dy);
+    if (ax > STEP && ax >= ay) {
+      const dir = dx > 0 ? "right" : "left";
+      onCmd(dir);
+      lastDir.current = dir;
+      origin.current = { x, y };
+    } else if (ay > STEP && ay > ax) {
+      const dir = dy > 0 ? "down" : "up";
+      onCmd(dir);
+      lastDir.current = dir;
+      origin.current = { x, y };
+    }
+  };
+  const end = (x, y) => {
+    if (!start.current) return;
+    const dt   = Date.now() - start.current.t;
+    const dist = Math.hypot(x - start.current.x, y - start.current.y);
+    if (!lastDir.current && dist < TAP_MAX_DIST && dt < TAP_MAX_MS) {
+      onSelect();
+    }
+    start.current = null;
+    origin.current = null;
+    lastDir.current = null;
+  };
+
+  const onPointerDown = (e) => {
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
+    begin(e.clientX, e.clientY);
+  };
+  const onPointerMove = (e) => {
+    if (!start.current) return;
+    e.preventDefault();
+    move(e.clientX, e.clientY);
+  };
+  const onPointerUp = (e) => {
+    end(e.clientX, e.clientY);
+  };
+
+  return (
+    <div
+      className="atv-touchpad"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => { start.current = null; origin.current = null; lastDir.current = null; }}
+    >
+      <div className="atv-tp-ring">
+        <span className="atv-tp-arrow atv-tp-up">▲</span>
+        <span className="atv-tp-arrow atv-tp-down">▼</span>
+        <span className="atv-tp-arrow atv-tp-left">◀</span>
+        <span className="atv-tp-arrow atv-tp-right">▶</span>
+        <span className="atv-tp-center">Tap to select</span>
+      </div>
+    </div>
+  );
+}
+
 function AppleTVSection({ tv, hass, editMode, onHideSection }) {
   const remoteId = tv.remote;
   const mpId     = tv.mediaPlayer;
@@ -1098,8 +1245,8 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
 
   const apps = tv.apps || [];
   const installed = mp?.attributes?.source_list || [];
-  const currentSource = mp?.attributes?.source;
-  const currentAppId  = mp?.attributes?.app_id;
+  const currentSource  = mp?.attributes?.source;
+  const currentAppId   = mp?.attributes?.app_id;
   const currentAppName = mp?.attributes?.app_name;
 
   const playing = mp?.state === "playing";
@@ -1112,10 +1259,6 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
         { entity_id: remoteId, command: cmd });
     } catch (e) { console.warn("[aether tv] send_command failed:", e); }
   };
-  // App launch path: modern Apple TV integration (pyatv) doesn't expose
-  // a switchable source_list. Use media_player.play_media with the iOS
-  // bundle ID instead — that's the supported way to launch apps.
-  // Falls back to select_source if the app entry only has `source`.
   const launchApp = async (app) => {
     if (!mpId) return;
     try {
@@ -1143,101 +1286,106 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
     callService(hass, "media_player.volume_set",
       { entity_id: volId, volume_level: v / 100 });
   };
+  const toggleMute = () => {
+    if (!volId) return;
+    callService(hass, "media_player.volume_mute",
+      { entity_id: volId, is_volume_muted: !vol?.attributes?.is_volume_muted });
+  };
 
   const volumeLevel = Math.round(((vol?.attributes?.volume_level) ?? 0) * 100);
   const volumeMuted = !!vol?.attributes?.is_volume_muted;
-  const art         = mp?.attributes?.entity_picture;
-  const title       = mp?.attributes?.media_title || (off ? "Off" : "Apple TV");
+  const title       = mp?.attributes?.media_title || currentAppName || (off ? "Off" : "Apple TV");
   const subtitle    = [mp?.attributes?.media_artist, mp?.attributes?.media_album_name]
                         .filter(Boolean).join(" · ")
-                     || (currentSource && currentSource !== "Apple TV" ? currentSource : "");
+                      || (currentSource && currentSource !== title ? currentSource : "");
 
   return (
     <>
       <div className="dash-section-head">
         <h2>Apple TV</h2>
         <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span>{off ? "Off" : (playing ? "Playing" : currentSource || "Idle")}</span>
+          <span>{off ? "Off" : (playing ? "Playing" : currentAppName || "Idle")}</span>
           {editMode && (
             <button className="section-hide-btn" onClick={onHideSection}>Hide section</button>
           )}
         </div>
       </div>
 
-      <div className="atv-card">
-        <div className="atv-left">
-          <div className="atv-now">
-            <div
-              className="atv-art"
-              style={art ? {
-                backgroundImage: `url('${art}')`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-              } : undefined}
-            >
-              {!art && <Icon name="tv" size={30} />}
-            </div>
-            <div className="atv-meta">
+      <div className="atv-tile">
+        <div className="atv-tile-head">
+          <div className="atv-brand">
+            <span className="atv-brand-glyph">
+              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M16.4 12.5c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2-.1 1.6-.8 3-.8s1.8.8 3 .8c1.2 0 2-1.1 2.8-2.3.9-1.3 1.2-2.6 1.2-2.6-.1 0-2.4-.9-2.4-3.7zM14.2 5.5c.6-.8 1.1-2 .9-3.1-1 .1-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.3-.6 3-1.4z" fill="currentColor"/></svg>
+            </span>
+            <div className="atv-brand-text">
               <div className="atv-title">{title}</div>
               {subtitle && <div className="atv-subtitle">{subtitle}</div>}
             </div>
-            <button
-              className={"atv-power" + (off ? " off" : "")}
-              onClick={togglePower}
-              title={off ? "Turn on" : "Turn off"}
-            >
-              <Icon name="power" size={18} />
-            </button>
           </div>
-
-          <div className="atv-volume">
-            <Icon name="volume" size={14} />
-            <input
-              type="range" min="0" max="100" value={volumeLevel}
-              onChange={(e) => setVolume(Number(e.target.value))}
-              disabled={!volId}
-            />
-            <span className="atv-vol-pct">{volumeMuted ? "Muted" : `${volumeLevel}%`}</span>
-          </div>
-
-          <div className="atv-apps">
-            {apps.map(app => {
-              // If source_list is populated, we can pre-check; otherwise
-              // we trust the config (bundle-ID launches work even when
-              // source_list is empty).
-              const exists = !app.source || installed.length === 0 || installed.includes(app.source);
-              const active = (app.bundleId && app.bundleId === currentAppId) ||
-                             (app.source   && app.source   === currentSource) ||
-                             (app.name     && app.name     === currentAppName);
-              return (
-                <button
-                  key={app.name}
-                  className={"atv-app" + (active ? " active" : "")}
-                  onClick={() => launchApp(app)}
-                  disabled={!exists}
-                  title={exists ? `Launch ${app.name}` : `${app.source} not found in Apple TV's source list`}
-                >
-                  {app.name}
-                </button>
-              );
-            })}
-          </div>
+          <button
+            className={"atv-power" + (off ? " off" : "")}
+            onClick={togglePower}
+            title={off ? "Turn on" : "Turn off"}
+          >
+            <Icon name="power" size={16} />
+          </button>
         </div>
 
-        <div className="atv-remote">
-          <div className="atv-dpad">
-            <button className="atv-btn atv-dpad-up"     onClick={() => send("up")}><Icon name="chevUp" size={20}/></button>
-            <button className="atv-btn atv-dpad-left"   onClick={() => send("left")}><Icon name="chevLeft" size={20}/></button>
-            <button className="atv-btn atv-dpad-select" onClick={() => send("select")}>OK</button>
-            <button className="atv-btn atv-dpad-right"  onClick={() => send("right")}><Icon name="chevRight" size={20}/></button>
-            <button className="atv-btn atv-dpad-down"   onClick={() => send("down")}><Icon name="chevDown" size={20}/></button>
-          </div>
-          <div className="atv-row">
-            <button className="atv-btn" onClick={() => send("menu")} title="Back / Menu"><Icon name="back" size={18}/></button>
-            <button className="atv-btn" onClick={() => send("home")} title="Home (TV button)"><Icon name="tv" size={18}/></button>
-            <button className="atv-btn" onClick={() => send("play_pause")} title="Play / Pause"><Icon name={playing ? "pause" : "play"} size={18}/></button>
-            <button className="atv-btn" onClick={() => send("siri")} title="Siri"><Icon name="mic" size={18}/></button>
-          </div>
+        <div className="atv-volume">
+          <button className="atv-mute" onClick={toggleMute} title={volumeMuted ? "Unmute" : "Mute"}>
+            <Icon name="volume" size={14} />
+          </button>
+          <input
+            type="range" min="0" max="100" value={volumeLevel}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            disabled={!volId}
+          />
+          <span className="atv-vol-pct">{volumeMuted ? "Muted" : `${volumeLevel}%`}</span>
+        </div>
+
+        <div className="atv-apps-grid">
+          {apps.map(app => {
+            const exists = !app.source || installed.length === 0 || installed.includes(app.source);
+            const active = (app.bundleId && app.bundleId === currentAppId) ||
+                           (app.source   && app.source   === currentSource) ||
+                           (app.name     && app.name     === currentAppName);
+            const icon = resolveAppIcon(app);
+            return (
+              <button
+                key={app.name}
+                className={"atv-app-tile" + (active ? " active" : "")}
+                onClick={() => launchApp(app)}
+                disabled={!exists}
+                title={exists ? `Launch ${app.name}` : `${app.source} not found in Apple TV's source list`}
+              >
+                <span
+                  className="atv-app-icon"
+                  style={icon ? { background: icon.bg, border: icon.border || "0" }
+                              : { background: "#1f2326" }}
+                >
+                  {icon?.glyph || <span className="atv-app-initial">{(app.name || "?").slice(0,1)}</span>}
+                </span>
+                <span className="atv-app-name">{app.name}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <TVTrackpad onCmd={send} onSelect={() => send("select")} />
+
+        <div className="atv-controls">
+          <button className="atv-ctrl" onClick={() => send("menu")} title="Back / Menu">
+            <Icon name="back" size={18}/>
+          </button>
+          <button className="atv-ctrl" onClick={() => send("home")} title="Home (TV button)">
+            <Icon name="tv" size={18}/>
+          </button>
+          <button className="atv-ctrl" onClick={() => send("play_pause")} title="Play / Pause">
+            <Icon name={playing ? "pause" : "play"} size={18}/>
+          </button>
+          <button className="atv-ctrl" onClick={() => send("siri")} title="Siri">
+            <Icon name="mic" size={18}/>
+          </button>
         </div>
       </div>
     </>
