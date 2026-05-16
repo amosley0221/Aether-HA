@@ -44,6 +44,7 @@ function MusicPage() {
   const [search, setSearch]   = React.useState("");
   const [eqOpen, setEqOpen]   = React.useState(false);
   const [queueOpen, setQueueOpen] = React.useState(false);
+  const [sourceOpen, setSourceOpen] = React.useState(false);
 
   const railRef        = React.useRef(null);
   const pointerStart   = React.useRef(null);   // {id, x, y}
@@ -68,14 +69,22 @@ function MusicPage() {
       )[0] || ctrl || display;
       const a = active?.attributes || {};
       const groupMembers = a.group_members || ctrl?.attributes?.group_members || [];
+      // Sonos source attributes (live on the bare integration entity). When
+      // a soundbar is on TV / a player is on Line-in, HA's state often
+      // shows "idle" even though audio is active — fall back to the source
+      // attribute to surface what's really happening.
+      const sourceList    = display?.attributes?.source_list || a.source_list || [];
+      const currentSource = display?.attributes?.source || a.source || null;
+      const onTvOrLineIn  = !!(currentSource && /\b(tv|line[\s-]?in|hdmi|airplay)\b/i.test(currentSource));
       return {
         ...room,
         entity:   active,
         ctrl,
+        display,
         entityId: resolvedCtrlId,
         displayId,
         state:    active?.state || "unavailable",
-        playing:  active?.state === "playing",
+        playing:  active?.state === "playing" || onTvOrLineIn,
         paused:   active?.state === "paused",
         track:    a.media_title || "",
         artist:   a.media_artist || "",
@@ -85,6 +94,9 @@ function MusicPage() {
         muted:    !!(ctrl?.attributes?.is_volume_muted ?? a.is_volume_muted),
         groupMembers,
         groupSize: groupMembers.length,
+        sourceList,
+        currentSource,
+        onTvOrLineIn,
       };
     });
     return mapped.sort((a, b) => score(a.state) - score(b.state));
@@ -276,6 +288,7 @@ function MusicPage() {
   // each frame to reveal off-screen rooms.
   const edgeScrollRAF = React.useRef(null);
   const edgeScrollVel = React.useRef(0);
+  const lastPointer   = React.useRef(null);
   const stopEdgeScroll = () => {
     if (edgeScrollRAF.current) {
       cancelAnimationFrame(edgeScrollRAF.current);
@@ -287,8 +300,8 @@ function MusicPage() {
     const rail = railRef.current;
     if (!rail) return;
     const rect = rail.getBoundingClientRect();
-    const edge = 60;        // px from edge where auto-scroll engages
-    const maxSpeed = 14;    // px per frame at the very edge
+    const edge = 90;        // px from edge where auto-scroll engages
+    const maxSpeed = 20;    // px per frame at the very edge
     let vel = 0;
     if (clientX < rect.left + edge) {
       vel = -maxSpeed * Math.min(1, (rect.left + edge - clientX) / edge);
@@ -299,8 +312,12 @@ function MusicPage() {
     if (vel !== 0 && !edgeScrollRAF.current) {
       const tick = () => {
         const v = edgeScrollVel.current;
-        if (!v || !railRef.current) { edgeScrollRAF.current = null; return; }
-        railRef.current.scrollLeft += v;
+        const r = railRef.current;
+        if (!v || !r) { edgeScrollRAF.current = null; return; }
+        const before = r.scrollLeft;
+        r.scrollLeft = before + v;
+        // If scroll didn't move (hit end), stop spinning.
+        if (r.scrollLeft === before) { edgeScrollRAF.current = null; return; }
         // While auto-scrolling, re-hit-test under the current finger position
         // since rooms slide under it without further touchmove events.
         const last = lastPointer.current;
@@ -313,8 +330,6 @@ function MusicPage() {
       edgeScrollRAF.current = null;
     }
   };
-
-  const lastPointer = React.useRef(null);
 
   React.useEffect(() => {
     const onTouchMove = (e) => {
@@ -452,7 +467,7 @@ function MusicPage() {
           <button className="btn-pill" style={{ padding: "7px 10px" }}><Icon name="more" size={16} /></button>
         </div>
 
-        <div className="rooms-rail scroll-x" ref={railRef}>
+        <div className={"rooms-rail scroll-x" + (drag ? " dragging-active" : "")} ref={railRef}>
           {liveRooms.map(room => {
             const isPrimary = room.id === primaryId;
             const className = [
@@ -527,7 +542,11 @@ function MusicPage() {
                   <span style={{ fontSize: 13, color: "var(--ink-2)" }}>{primary?.name}</span>
                 </div>
                 <div className="np-track">
-                  {primary?.track || (primary?.playing ? "Playing" : primary?.state === "unavailable" ? "Offline" : "Nothing playing")}
+                  {primary?.track
+                    || (primary?.onTvOrLineIn ? primary.currentSource
+                        : primary?.playing ? "Playing"
+                        : primary?.state === "unavailable" ? "Offline"
+                        : "Nothing playing")}
                 </div>
                 <div className="np-artist">{primary?.artist}</div>
                 <div className="np-album">{primary?.album}</div>
@@ -547,7 +566,15 @@ function MusicPage() {
                 >
                   <Icon name="group" /> {primaryCtrl?.attributes?.group_members?.length > 1 ? `Grouped · ${primaryCtrl.attributes.group_members.length}` : "Group"}
                 </button>
-                <button className="action" style={{ padding: "7px 10px" }}><Icon name="more" /></button>
+                {primary?.sourceList?.length > 1 && (
+                  <button
+                    className={"action" + (primary?.onTvOrLineIn ? " on" : "")}
+                    onClick={() => setSourceOpen(true)}
+                    title={primary?.currentSource ? `Source · ${primary.currentSource}` : "Switch source"}
+                  >
+                    <Icon name="more" /> {primary?.onTvOrLineIn ? primary.currentSource : "Source"}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -680,6 +707,12 @@ function MusicPage() {
         onClose={() => setQueueOpen(false)}
         entityId={primary?.entityId}
         hassRef={hassRef}
+        hass={hass}
+      />
+      <SourceDialog
+        open={sourceOpen}
+        onClose={() => setSourceOpen(false)}
+        room={primary}
         hass={hass}
       />
     </div>
@@ -1211,6 +1244,61 @@ function TrackList({ items, parent, onEnter, onPlayInList }) {
 // The user's Sonos integration exposes a consistent set of switches per
 // speaker (crossfade, loudness, night sound, etc.). We list whichever
 // exist for the primary room and let the user toggle them.
+// Source picker for Sonos rooms. Calls media_player.select_source on the
+// bare Sonos entity (displayId), since the MA wrapper doesn't expose
+// physical inputs like TV / Line-in / HDMI.
+function SourceDialog({ open, onClose, room, hass }) {
+  const scrollTop = useModalAnchor(open);
+  if (!open || !room) return null;
+  const sources    = room.sourceList || [];
+  const currentSrc = room.currentSource;
+  const target     = room.displayId || room.entityId;
+  const pick = async (src) => {
+    try {
+      await callService(hass, "media_player.select_source",
+        { entity_id: target, source: src });
+    } catch (err) {
+      console.warn("[aether] select_source failed:", err);
+    }
+    onClose();
+  };
+  return (
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>{room.name} · Source</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body">
+          {sources.length === 0 ? (
+            <div style={{ color: "var(--ink-3)", fontSize: 13, padding: "12px 0" }}>
+              No source inputs exposed for {room.name}.
+            </div>
+          ) : sources.map((src) => {
+            const active = src === currentSrc;
+            return (
+              <button
+                key={src}
+                className={"eq-row" + (active ? " active" : "")}
+                onClick={() => pick(src)}
+                style={{
+                  width: "100%", textAlign: "left",
+                  background: active ? "var(--accent-soft, rgba(74,141,216,.12))" : "transparent",
+                  border: active ? "1px solid var(--accent)" : "1px solid transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <span className="eq-label">{src}</span>
+                {active && <span style={{ color: "var(--accent)", fontSize: 12 }}>● Active</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EQDialog({ open, onClose, room, hass }) {
   const scrollTop = useModalAnchor(open);
   if (!open || !room) return null;

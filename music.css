@@ -72,6 +72,15 @@
   mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 28px), transparent 100%);
 }
 .rooms-rail::-webkit-scrollbar { display: none; }
+/* Scroll-snap fights programmatic scrollLeft during drag-to-group. Disable
+   it (and the edge mask which crops finger hit-tests at the very edges)
+   while a drag is in flight. */
+.rooms-rail.dragging-active {
+  scroll-snap-type: none;
+  scroll-behavior: auto;
+  -webkit-mask-image: none;
+          mask-image: none;
+}
 
 .room {
   display: flex; align-items: center; gap: 10px;
