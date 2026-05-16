@@ -566,11 +566,11 @@ function MusicPage() {
                 >
                   <Icon name="group" /> {primaryCtrl?.attributes?.group_members?.length > 1 ? `Grouped · ${primaryCtrl.attributes.group_members.length}` : "Group"}
                 </button>
-                {primary?.sourceList?.length > 1 && (
+                {primary?.displayId && (
                   <button
                     className={"action" + (primary?.onTvOrLineIn ? " on" : "")}
                     onClick={() => setSourceOpen(true)}
-                    title={primary?.currentSource ? `Source · ${primary.currentSource}` : "Switch source"}
+                    title={primary?.currentSource ? `Source · ${primary.currentSource}` : "Switch source (TV / Line-in / Queue)"}
                   >
                     <Icon name="more" /> {primary?.onTvOrLineIn ? primary.currentSource : "Source"}
                   </button>
@@ -1250,10 +1250,15 @@ function TrackList({ items, parent, onEnter, onPlayInList }) {
 function SourceDialog({ open, onClose, room, hass }) {
   const scrollTop = useModalAnchor(open);
   if (!open || !room) return null;
-  const sources    = room.sourceList || [];
-  const currentSrc = room.currentSource;
-  const target     = room.displayId || room.entityId;
+  // Re-read source_list live from hass — the room object captures a
+  // snapshot at the last MusicPage render which may be stale, and
+  // source_list often arrives a beat after the entity itself.
+  const target  = room.displayId || room.entityId;
+  const live    = hass?.states?.[target];
+  const sources = live?.attributes?.source_list || room.sourceList || [];
+  const currentSrc = live?.attributes?.source || room.currentSource;
   const pick = async (src) => {
+    console.log("[aether] select_source", target, "→", src);
     try {
       await callService(hass, "media_player.select_source",
         { entity_id: target, source: src });
@@ -1270,9 +1275,18 @@ function SourceDialog({ open, onClose, room, hass }) {
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body">
+          <div style={{ fontSize: 11, color: "var(--ink-3)", marginBottom: 8 }}>
+            Entity <code>{target}</code>
+            {currentSrc ? <> · Current: <strong>{currentSrc}</strong></> : null}
+          </div>
           {sources.length === 0 ? (
             <div style={{ color: "var(--ink-3)", fontSize: 13, padding: "12px 0" }}>
-              No source inputs exposed for {room.name}.
+              The Sonos integration isn't exposing a <code>source_list</code> for
+              this speaker. That happens when the speaker doesn't have any
+              physical inputs (TV/Line-in) and isn't on a stream that registers
+              as a switchable source. If this is an Arc/Beam/Amp and you expect
+              "TV" or "Line-in" to appear here, check the integration in
+              Settings → Devices & Services → Sonos.
             </div>
           ) : sources.map((src) => {
             const active = src === currentSrc;
