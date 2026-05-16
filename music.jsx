@@ -620,6 +620,12 @@ async function findAppleMusicRadio(hass, entityId) {
     type: "media_player/browse_media",
     entity_id: entityId,
   });
+  console.log("[Aether radio] root children:",
+    (root.children || []).map(c => ({
+      title: c.title, cid: c.media_content_id, cls: c.media_class,
+      ctype: c.media_content_type, expand: c.can_expand, play: c.can_play,
+    }))
+  );
   const browse = (item) => hass.callWS({
     type: "media_player/browse_media",
     entity_id: entityId,
@@ -628,13 +634,13 @@ async function findAppleMusicRadio(hass, entityId) {
   });
 
   // BFS up to 3 levels; cap fetches.
-  const queue = [{ node: root, depth: 0 }];
+  const queue = [{ node: root, depth: 0, path: "(root)" }];
   const seen  = new Set();
   let fetches = 0;
   const stations = [];
 
-  while (queue.length && fetches < 30) {
-    const { node, depth } = queue.shift();
+  while (queue.length && fetches < 40) {
+    const { node, depth, path } = queue.shift();
     const children = node.children || [];
 
     // Collect leaves that look like Apple Music radio stations.
@@ -653,33 +659,39 @@ async function findAppleMusicRadio(hass, entityId) {
       (ncid.includes("apple_music") || ncid.includes("apple-music") || ncid.includes("applemusic")) &&
       (/\bradio\b|\bstation/.test(ntitle));
     if (isAppleMusicRadioFolder && children.length) {
+      console.log("[Aether radio] matched folder", path, node.title);
       return { title: node.title || "Apple Music Radio", children, can_expand: true };
     }
 
     if (depth >= 3) continue;
 
-    // Enqueue promising children: Apple Music provider + anything titled
-    // Browse / Radio / Stations within it. Skip the rest to bound fan-out.
+    // Enqueue strategy:
+    //   depth 0: try ALL expandable root children (we don't know where
+    //            Apple Music lives in this user's MA tree)
+    //   depth 1+: only follow promising branches (Apple Music / radio /
+    //            station / browse / library) so the fan-out stays bounded
     for (const c of children) {
+      if (!c.can_expand) continue;
       const t   = (c.title || "").toLowerCase();
       const cid = (c.media_content_id || "").toLowerCase();
       const isAM = t.includes("apple music") || cid.includes("apple_music") ||
                    cid.includes("apple-music") || cid.includes("applemusic");
-      const isRadioish = /\bradio\b|\bstation|\bbrowse\b/.test(t);
-      if (!c.can_expand) continue;
-      if (depth === 0 && !(isAM || /\bbrowse\b/.test(t))) continue;
-      if (depth >= 1  && !(isAM || isRadioish)) continue;
+      const isRadioish = /\bradio\b|\bstation|\bbrowse\b|\blibrary\b/.test(t);
+      if (depth >= 1 && !(isAM || isRadioish)) continue;
       const key = c.media_content_id;
       if (key && seen.has(key)) continue;
       if (key) seen.add(key);
       try {
         fetches++;
         const sub = await browse(c);
-        queue.push({ node: sub, depth: depth + 1 });
-      } catch { /* skip failed branch */ }
+        queue.push({ node: sub, depth: depth + 1, path: path + " > " + c.title });
+      } catch (e) {
+        console.log("[Aether radio] browse failed", c.title, e?.message || e);
+      }
     }
   }
 
+  console.log("[Aether radio] scan complete. fetches:", fetches, "stations:", stations.length);
   if (stations.length) {
     return { title: "Apple Music Radio", children: stations, can_expand: true };
   }
@@ -835,9 +847,16 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
       if (LIB_TAB_TARGETS[tab] === "APPLE_MUSIC_RADIO_SCAN") {
         const found = await findAppleMusicRadio(hassRef.current, entityId);
         if (found) {
+          console.log("[Aether radio] found", found.children?.length, "Apple Music radio items");
           setStack([{ kind: "browse", node: found, title: found.title }]);
         } else {
-          setStack([{ kind: "browse", node: { children: [] }, title: "Apple Music Radio", empty: "no-apple-radio" }]);
+          console.log("[Aether radio] scan found no Apple Music radio");
+          setStack([{
+            kind: "browse",
+            empty: "no-apple-radio",
+            node: { children: [], empty: "no-apple-radio" },
+            title: "Apple Music Radio",
+          }]);
         }
         setLoading(false);
         return;
