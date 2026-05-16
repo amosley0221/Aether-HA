@@ -37,12 +37,18 @@
   background: rgba(255,255,255,.6);
   border: 1px solid var(--hairline);
   border-radius: 999px;
-  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.dash-filters::-webkit-scrollbar { display: none; }
 .dash-filter {
   font-size: 13px; padding: 7px 14px; border-radius: 999px;
   color: var(--ink-3); transition: all .15s;
   display: inline-flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .dash-filter:hover { color: var(--ink); }
 .dash-filter.active { background: var(--ink); color: white; }
@@ -475,6 +481,19 @@
   border-color: var(--ink);
 }
 .car-btn.on:hover { background: var(--accent); border-color: var(--accent); }
+
+/* ─── Mid-width (foldables, tablets in portrait) ─────────────────────
+   Below ~960px the car card's side-by-side layout starts to crush the
+   right column (4-stat row + button group can't both fit in ~324px),
+   so stack the car card a beat earlier here. */
+@media (max-width: 960px) {
+  .car-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .car-card-image { min-height: 180px; }
+  .car-card-image svg, .car-card-image img { max-width: 100%; }
+}
 
 /* ─── Mobile overrides ─────────────────────────────────────────────── */
 @media (max-width: 720px) {
