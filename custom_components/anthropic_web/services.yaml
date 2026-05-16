@@ -1,0 +1,25 @@
+search:
+  name: Web search
+  description: >
+    Send a query to Anthropic Claude with the web_search tool enabled,
+    returning a synthesized answer based on current web results.
+  fields:
+    query:
+      name: Query
+      description: What to look up.
+      required: true
+      example: "Did the Phillies win last night and what was the score?"
+      selector:
+        text:
+    max_uses:
+      name: Max searches
+      description: >
+        Maximum number of search calls Claude can make for this query
+        (default 3). Higher = more thorough but slower and more tokens.
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 10
+          mode: box
