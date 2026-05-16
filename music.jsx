@@ -533,7 +533,7 @@ function MusicPage() {
         <div className="lib-card">
           <div className="lib-top">
             <div className="lib-tabs">
-              {["Listen Now","Browse","Radio","Library","Search"].map(t => (
+              {["Listen Now","Radio","Library","Search"].map(t => (
                 <button
                   key={t}
                   className={"lib-tab" + (tab === t ? " active" : "")}
@@ -588,18 +588,103 @@ const LIB_TAB_TARGETS = {
     ["Apple Music", "Recently Added"],
     ["Favorites"],
   ],
-  "Browse":     null,
-  "Radio":      [
-    ["Apple Music", "Radio Stations"],
-    ["Apple Music", "Stations"],
-    ["Apple Music", "Radio"],
-    ["Radio Browser"],
-  ],
+  // Radio uses a custom Apple Music scan in runBrowse — no static chain.
+  "Radio":      "APPLE_MUSIC_RADIO_SCAN",
   "Library":    [
     ["Music Library"],
     ["Library"],
   ],
 };
+
+// Heuristic: does this browse node represent an Apple Music radio item?
+function isAppleMusicRadioNode(node) {
+  const title = (node?.title || "").toLowerCase();
+  const cls   = (node?.media_class || "").toLowerCase();
+  const ctype = (node?.media_content_type || "").toLowerCase();
+  const cid   = (node?.media_content_id || "").toLowerCase();
+  const inAppleMusic = cid.includes("apple_music") || cid.includes("apple-music") ||
+                       cid.includes("applemusic")  || cid.includes("am://") ||
+                       cid.startsWith("apple_music");
+  const looksRadio = cls === "radio" || ctype === "radio" ||
+                     /\bradio\b|\bstation/.test(title);
+  return inAppleMusic && looksRadio;
+}
+
+// Walk MA browse tree starting at root, find Apple Music's Radio folder OR
+// collect Apple Music radio leaves. Returns a synthetic node:
+//   { title: "Apple Music Radio", children: [...] }
+// or null if nothing found. Bounded to 3 levels deep + ~30 sub-fetches so
+// large libraries don't pin the WS connection.
+async function findAppleMusicRadio(hass, entityId) {
+  const root = await hass.callWS({
+    type: "media_player/browse_media",
+    entity_id: entityId,
+  });
+  const browse = (item) => hass.callWS({
+    type: "media_player/browse_media",
+    entity_id: entityId,
+    media_content_id:   item.media_content_id,
+    media_content_type: item.media_content_type,
+  });
+
+  // BFS up to 3 levels; cap fetches.
+  const queue = [{ node: root, depth: 0 }];
+  const seen  = new Set();
+  let fetches = 0;
+  const stations = [];
+
+  while (queue.length && fetches < 30) {
+    const { node, depth } = queue.shift();
+    const children = node.children || [];
+
+    // Collect leaves that look like Apple Music radio stations.
+    for (const c of children) {
+      if (isAppleMusicRadioNode(c) && (c.can_play || c.can_expand)) {
+        stations.push(c);
+      }
+    }
+
+    // If THIS node itself is an Apple Music "Radio" folder, prefer returning
+    // its full children list directly (avoids losing items the heuristic
+    // didn't flag, e.g. "Apple Music 1" without "radio" in the title).
+    const ntitle = (node.title || "").toLowerCase();
+    const ncid   = (node.media_content_id || "").toLowerCase();
+    const isAppleMusicRadioFolder =
+      (ncid.includes("apple_music") || ncid.includes("apple-music") || ncid.includes("applemusic")) &&
+      (/\bradio\b|\bstation/.test(ntitle));
+    if (isAppleMusicRadioFolder && children.length) {
+      return { title: node.title || "Apple Music Radio", children, can_expand: true };
+    }
+
+    if (depth >= 3) continue;
+
+    // Enqueue promising children: Apple Music provider + anything titled
+    // Browse / Radio / Stations within it. Skip the rest to bound fan-out.
+    for (const c of children) {
+      const t   = (c.title || "").toLowerCase();
+      const cid = (c.media_content_id || "").toLowerCase();
+      const isAM = t.includes("apple music") || cid.includes("apple_music") ||
+                   cid.includes("apple-music") || cid.includes("applemusic");
+      const isRadioish = /\bradio\b|\bstation|\bbrowse\b/.test(t);
+      if (!c.can_expand) continue;
+      if (depth === 0 && !(isAM || /\bbrowse\b/.test(t))) continue;
+      if (depth >= 1  && !(isAM || isRadioish)) continue;
+      const key = c.media_content_id;
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      try {
+        fetches++;
+        const sub = await browse(c);
+        queue.push({ node: sub, depth: depth + 1 });
+      } catch { /* skip failed branch */ }
+    }
+  }
+
+  if (stations.length) {
+    return { title: "Apple Music Radio", children: stations, can_expand: true };
+  }
+  return null;
+}
 
 // Pins persistence — HA's per-user storage (syncs across browsers/devices),
 // with a localStorage fallback. Stored as an array of { title, image,
@@ -744,6 +829,20 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
     setLoading(true);
     setErr(null);
     try {
+      // Radio tab: scan for Apple Music radio specifically. If nothing
+      // found, render an explicit empty state — don't fall back to other
+      // providers (Radio Browser etc.) since the user has Apple Music.
+      if (LIB_TAB_TARGETS[tab] === "APPLE_MUSIC_RADIO_SCAN") {
+        const found = await findAppleMusicRadio(hassRef.current, entityId);
+        if (found) {
+          setStack([{ kind: "browse", node: found, title: found.title }]);
+        } else {
+          setStack([{ kind: "browse", node: { children: [] }, title: "Apple Music Radio", empty: "no-apple-radio" }]);
+        }
+        setLoading(false);
+        return;
+      }
+
       const root = await hassRef.current.callWS({
         type: "media_player/browse_media",
         entity_id: entityId,
@@ -954,13 +1053,25 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
               No pinned albums yet
             </div>
             <div style={{ marginTop: 6, fontSize: 12 }}>
-              In Library, Browse, or Search, tap the bookmark icon on any
-              album, playlist, or artist to pin it here.
+              In Library or Search, tap the bookmark icon on any album,
+              playlist, or artist to pin it here.
             </div>
           </div>
         ) : (
           <ItemGrid items={pins} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
         )
+      ) : top.kind === "browse" && top.node?.empty === "no-apple-radio" ? (
+        <div className="lib-status" style={{ paddingTop: 40 }}>
+          <div style={{ fontSize: 14, color: "var(--ink-2)" }}>
+            No Apple Music radio stations found
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12 }}>
+            Make sure the Apple Music provider is enabled in Music Assistant
+            and that radio browsing is available in your region. Personal
+            stations are also accessible via Search (try "Apple Music 1",
+            "Apple Music Hits", or an artist name + "radio").
+          </div>
+        </div>
       ) : isTrackList(top.node?.children || [])
           ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} onPlayInList={playTrackInList} />
           : <ItemGrid items={top.node?.children || []} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
