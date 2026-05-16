@@ -165,18 +165,29 @@ function MusicPage() {
     svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.entityId });
   };
 
-  // ─── Drag-to-group via Pointer Events (works on mouse + touch) ──────────
-  // Strategy that coexists with native horizontal scroll on the rail:
-  //   - On pointerdown, start a 400ms long-press timer.
-  //   - If the user moves more than ~10px before the timer fires, abort
-  //     the timer (they're scrolling or were jittery). Native scroll
-  //     continues unimpeded because touch-action stays at default.
-  //   - If the timer fires (held still long enough), enter drag mode.
-  //     From then on we preventDefault on pointermove so the browser
-  //     stops scrolling, and we hit-test rooms under the pointer.
-  //   - On pointerup with drag+over, fire media_player.join. With no
-  //     drag and no significant movement, treat as a tap and select
-  //     primary.
+  // ─── Drag-to-group ──────────────────────────────────────────────────────
+  // Uses raw touch + mouse events (NOT pointer events). iOS Safari fires
+  // `pointercancel` aggressively the moment it suspects a scroll, killing
+  // long-press detection. Touch events let us own the gesture from the
+  // start and only block scrolling once drag has actually begun.
+  //
+  // Flow (touch):
+  //   touchstart → start 320ms long-press timer.
+  //   touchmove (passive: false):
+  //     • drag not active yet: if finger moved >14px, cancel the timer
+  //       (user is scrolling). Don't preventDefault — native scroll wins.
+  //     • drag active: preventDefault to stop scroll, hit-test rooms under
+  //       finger, update `over`.
+  //   touchend: if drag+over → media_player.join. Quick tap → set primary.
+  //   touchcancel: only abort if drag hasn't started; otherwise let the
+  //     in-flight drag finish on touchend (iOS won't fire end after cancel,
+  //     so we treat cancel-during-drag as a drop too).
+  //
+  // Flow (mouse): mirrors the same lifecycle via mousedown/mousemove/mouseup.
+
+  const dragStateRef = React.useRef({ drag: null, over: null });
+  React.useEffect(() => { dragStateRef.current = { drag, over }; }, [drag, over]);
+
   const cancelLongPress = () => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
@@ -184,87 +195,126 @@ function MusicPage() {
     }
   };
 
-  const onRoomPointerDown = (roomId) => (e) => {
-    if (e.target.closest(".room-ctrl")) return;
-    pointerStart.current = { id: roomId, x: e.clientX, y: e.clientY, time: Date.now() };
+  const beginPress = (roomId, x, y) => {
+    pointerStart.current = { id: roomId, x, y, time: Date.now() };
     cancelLongPress();
     longPressTimer.current = setTimeout(() => {
       setDrag(roomId);
-    }, 400);
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch {} }
+    }, 320);
+  };
+
+  const updateOver = (clientX, clientY) => {
+    if (!railRef.current) return;
+    const candidates = railRef.current.querySelectorAll(".room");
+    let foundId = null;
+    for (const r of candidates) {
+      const rect = r.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right &&
+          clientY >= rect.top  && clientY <= rect.bottom) {
+        foundId = r.getAttribute("data-room-id");
+        break;
+      }
+    }
+    const cur = dragStateRef.current.drag;
+    setOver(foundId && foundId !== cur ? foundId : null);
+  };
+
+  const finishDrag = async () => {
+    cancelLongPress();
+    const ps = pointerStart.current;
+    pointerStart.current = null;
+    const { drag: curDrag, over: curOver } = dragStateRef.current;
+    if (curDrag && curOver) {
+      const dragged = liveRooms.find(r => r.id === curDrag);
+      const target  = liveRooms.find(r => r.id === curOver);
+      if (dragged?.entityId && target?.entityId) {
+        try {
+          await svc("media_player.join", {
+            entity_id: target.entityId,
+            group_members: [dragged.entityId],
+          });
+        } catch (err) {
+          console.warn("[aether] media_player.join failed:", err);
+        }
+      }
+    } else if (ps && !curDrag) {
+      const dt = Date.now() - ps.time;
+      if (dt < 500) {
+        setPrimaryId(ps.id);
+        setUserSelectedPrimary(true);
+      }
+    }
+    setDrag(null);
+    setOver(null);
+  };
+
+  const onRoomTouchStart = (roomId) => (e) => {
+    if (e.target.closest(".room-ctrl")) return;
+    const t = e.touches[0];
+    if (!t) return;
+    beginPress(roomId, t.clientX, t.clientY);
+  };
+
+  const onRoomMouseDown = (roomId) => (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest(".room-ctrl")) return;
+    beginPress(roomId, e.clientX, e.clientY);
   };
 
   React.useEffect(() => {
-    const onMove = (e) => {
+    const onTouchMove = (e) => {
+      const ps = pointerStart.current;
+      if (!ps) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const dx = t.clientX - ps.x;
+      const dy = t.clientY - ps.y;
+      if (!dragStateRef.current.drag) {
+        if (Math.hypot(dx, dy) > 14) cancelLongPress();
+        return;
+      }
+      e.preventDefault();
+      updateOver(t.clientX, t.clientY);
+    };
+    const onTouchEnd  = () => { finishDrag(); };
+    const onTouchCancel = () => {
+      // iOS sometimes fires touchcancel right when we preventDefault during
+      // an active drag. If we're already dragging, treat it as a drop.
+      if (dragStateRef.current.drag) {
+        finishDrag();
+      } else {
+        cancelLongPress();
+        pointerStart.current = null;
+      }
+    };
+    const onMouseMove = (e) => {
       const ps = pointerStart.current;
       if (!ps) return;
       const dx = e.clientX - ps.x;
       const dy = e.clientY - ps.y;
-      if (!drag) {
-        // Cancel the long-press if the user moved enough — they're scrolling
-        if (Math.hypot(dx, dy) > 10) cancelLongPress();
+      if (!dragStateRef.current.drag) {
+        if (Math.hypot(dx, dy) > 14) cancelLongPress();
         return;
       }
-      // Drag is active — block native scroll and hit-test
       e.preventDefault();
-      if (!railRef.current) return;
-      const candidates = railRef.current.querySelectorAll(".room");
-      let foundId = null;
-      for (const r of candidates) {
-        const rect = r.getBoundingClientRect();
-        if (e.clientX >= rect.left && e.clientX <= rect.right &&
-            e.clientY >= rect.top  && e.clientY <= rect.bottom) {
-          foundId = r.getAttribute("data-room-id");
-          break;
-        }
-      }
-      setOver(foundId && foundId !== drag ? foundId : null);
+      updateOver(e.clientX, e.clientY);
     };
+    const onMouseUp = () => { finishDrag(); };
 
-    const onUp = async () => {
-      cancelLongPress();
-      const ps = pointerStart.current;
-      pointerStart.current = null;
-      if (drag && over) {
-        const dragged = liveRooms.find(r => r.id === drag);
-        const target  = liveRooms.find(r => r.id === over);
-        if (dragged?.entityId && target?.entityId) {
-          try {
-            await svc("media_player.join", {
-              entity_id: target.entityId,
-              group_members: [dragged.entityId],
-            });
-          } catch (err) {
-            console.warn("[aether] media_player.join failed:", err);
-          }
-        }
-      } else if (ps && !drag) {
-        // Quick tap (no long-press, no significant movement) → select primary
-        const dt = Date.now() - ps.time;
-        if (dt < 500) {
-          setPrimaryId(ps.id);
-          setUserSelectedPrimary(true);
-        }
-      }
-      setDrag(null);
-      setOver(null);
-    };
-
-    const onCancel = () => {
-      cancelLongPress();
-      pointerStart.current = null;
-      setDrag(null);
-      setOver(null);
-    };
-
-    document.addEventListener("pointermove",  onMove, { passive: false });
-    document.addEventListener("pointerup",    onUp);
-    document.addEventListener("pointercancel", onCancel);
+    document.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    document.addEventListener("touchend",   onTouchEnd);
+    document.addEventListener("touchcancel", onTouchCancel);
+    document.addEventListener("mousemove",  onMouseMove);
+    document.addEventListener("mouseup",    onMouseUp);
     return () => {
-      document.removeEventListener("pointermove",  onMove);
-      document.removeEventListener("pointerup",    onUp);
-      document.removeEventListener("pointercancel", onCancel);
+      document.removeEventListener("touchmove",  onTouchMove);
+      document.removeEventListener("touchend",   onTouchEnd);
+      document.removeEventListener("touchcancel", onTouchCancel);
+      document.removeEventListener("mousemove",  onMouseMove);
+      document.removeEventListener("mouseup",    onMouseUp);
     };
-  }, [drag, over, liveRooms]);
+  }, [liveRooms]);
 
   const ungroupPrimary = () => primaryCtrl?.attributes?.group_members?.length > 1
     && svc("media_player.unjoin", { entity_id: primary.entityId });
@@ -358,8 +408,9 @@ function MusicPage() {
                 key={room.id}
                 className={className}
                 data-room-id={room.id}
-                onPointerDown={onRoomPointerDown(room.id)}
-                title={room.entity ? "Drag onto another room to group" : `Player offline (${room.entityId})`}
+                onTouchStart={onRoomTouchStart(room.id)}
+                onMouseDown={onRoomMouseDown(room.id)}
+                title={room.entity ? "Hold and drag onto another room to group" : `Player offline (${room.entityId})`}
               >
                 <Avatar colors={room.color} />
                 <div className="room-meta">
@@ -533,7 +584,7 @@ function MusicPage() {
         <div className="lib-card">
           <div className="lib-top">
             <div className="lib-tabs">
-              {["Listen Now","Radio","Library","Search"].map(t => (
+              {["Listen Now","Library","Search"].map(t => (
                 <button
                   key={t}
                   className={"lib-tab" + (tab === t ? " active" : "")}
@@ -588,115 +639,11 @@ const LIB_TAB_TARGETS = {
     ["Apple Music", "Recently Added"],
     ["Favorites"],
   ],
-  // Radio uses a custom Apple Music scan in runBrowse — no static chain.
-  "Radio":      "APPLE_MUSIC_RADIO_SCAN",
   "Library":    [
     ["Music Library"],
     ["Library"],
   ],
 };
-
-// Heuristic: does this browse node represent an Apple Music radio item?
-function isAppleMusicRadioNode(node) {
-  const title = (node?.title || "").toLowerCase();
-  const cls   = (node?.media_class || "").toLowerCase();
-  const ctype = (node?.media_content_type || "").toLowerCase();
-  const cid   = (node?.media_content_id || "").toLowerCase();
-  const inAppleMusic = cid.includes("apple_music") || cid.includes("apple-music") ||
-                       cid.includes("applemusic")  || cid.includes("am://") ||
-                       cid.startsWith("apple_music");
-  const looksRadio = cls === "radio" || ctype === "radio" ||
-                     /\bradio\b|\bstation/.test(title);
-  return inAppleMusic && looksRadio;
-}
-
-// Walk MA browse tree starting at root, find Apple Music's Radio folder OR
-// collect Apple Music radio leaves. Returns a synthetic node:
-//   { title: "Apple Music Radio", children: [...] }
-// or null if nothing found. Bounded to 3 levels deep + ~30 sub-fetches so
-// large libraries don't pin the WS connection.
-async function findAppleMusicRadio(hass, entityId) {
-  const root = await hass.callWS({
-    type: "media_player/browse_media",
-    entity_id: entityId,
-  });
-  console.log("[Aether radio] root children:",
-    (root.children || []).map(c => ({
-      title: c.title, cid: c.media_content_id, cls: c.media_class,
-      ctype: c.media_content_type, expand: c.can_expand, play: c.can_play,
-    }))
-  );
-  const browse = (item) => hass.callWS({
-    type: "media_player/browse_media",
-    entity_id: entityId,
-    media_content_id:   item.media_content_id,
-    media_content_type: item.media_content_type,
-  });
-
-  // BFS up to 3 levels; cap fetches.
-  const queue = [{ node: root, depth: 0, path: "(root)" }];
-  const seen  = new Set();
-  let fetches = 0;
-  const stations = [];
-
-  while (queue.length && fetches < 40) {
-    const { node, depth, path } = queue.shift();
-    const children = node.children || [];
-
-    // Collect leaves that look like Apple Music radio stations.
-    for (const c of children) {
-      if (isAppleMusicRadioNode(c) && (c.can_play || c.can_expand)) {
-        stations.push(c);
-      }
-    }
-
-    // If THIS node itself is an Apple Music "Radio" folder, prefer returning
-    // its full children list directly (avoids losing items the heuristic
-    // didn't flag, e.g. "Apple Music 1" without "radio" in the title).
-    const ntitle = (node.title || "").toLowerCase();
-    const ncid   = (node.media_content_id || "").toLowerCase();
-    const isAppleMusicRadioFolder =
-      (ncid.includes("apple_music") || ncid.includes("apple-music") || ncid.includes("applemusic")) &&
-      (/\bradio\b|\bstation/.test(ntitle));
-    if (isAppleMusicRadioFolder && children.length) {
-      console.log("[Aether radio] matched folder", path, node.title);
-      return { title: node.title || "Apple Music Radio", children, can_expand: true };
-    }
-
-    if (depth >= 3) continue;
-
-    // Enqueue strategy:
-    //   depth 0: try ALL expandable root children (we don't know where
-    //            Apple Music lives in this user's MA tree)
-    //   depth 1+: only follow promising branches (Apple Music / radio /
-    //            station / browse / library) so the fan-out stays bounded
-    for (const c of children) {
-      if (!c.can_expand) continue;
-      const t   = (c.title || "").toLowerCase();
-      const cid = (c.media_content_id || "").toLowerCase();
-      const isAM = t.includes("apple music") || cid.includes("apple_music") ||
-                   cid.includes("apple-music") || cid.includes("applemusic");
-      const isRadioish = /\bradio\b|\bstation|\bbrowse\b|\blibrary\b/.test(t);
-      if (depth >= 1 && !(isAM || isRadioish)) continue;
-      const key = c.media_content_id;
-      if (key && seen.has(key)) continue;
-      if (key) seen.add(key);
-      try {
-        fetches++;
-        const sub = await browse(c);
-        queue.push({ node: sub, depth: depth + 1, path: path + " > " + c.title });
-      } catch (e) {
-        console.log("[Aether radio] browse failed", c.title, e?.message || e);
-      }
-    }
-  }
-
-  console.log("[Aether radio] scan complete. fetches:", fetches, "stations:", stations.length);
-  if (stations.length) {
-    return { title: "Apple Music Radio", children: stations, can_expand: true };
-  }
-  return null;
-}
 
 // Pins persistence — HA's per-user storage (syncs across browsers/devices),
 // with a localStorage fallback. Stored as an array of { title, image,
@@ -841,27 +788,6 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
     setLoading(true);
     setErr(null);
     try {
-      // Radio tab: scan for Apple Music radio specifically. If nothing
-      // found, render an explicit empty state — don't fall back to other
-      // providers (Radio Browser etc.) since the user has Apple Music.
-      if (LIB_TAB_TARGETS[tab] === "APPLE_MUSIC_RADIO_SCAN") {
-        const found = await findAppleMusicRadio(hassRef.current, entityId);
-        if (found) {
-          console.log("[Aether radio] found", found.children?.length, "Apple Music radio items");
-          setStack([{ kind: "browse", node: found, title: found.title }]);
-        } else {
-          console.log("[Aether radio] scan found no Apple Music radio");
-          setStack([{
-            kind: "browse",
-            empty: "no-apple-radio",
-            node: { children: [], empty: "no-apple-radio" },
-            title: "Apple Music Radio",
-          }]);
-        }
-        setLoading(false);
-        return;
-      }
-
       const root = await hassRef.current.callWS({
         type: "media_player/browse_media",
         entity_id: entityId,
@@ -1079,18 +1005,6 @@ function Library({ entityId, hassRef, playMedia, tab, externalQuery }) {
         ) : (
           <ItemGrid items={pins} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
         )
-      ) : top.kind === "browse" && top.node?.empty === "no-apple-radio" ? (
-        <div className="lib-status" style={{ paddingTop: 40 }}>
-          <div style={{ fontSize: 14, color: "var(--ink-2)" }}>
-            No Apple Music radio stations found
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12 }}>
-            Make sure the Apple Music provider is enabled in Music Assistant
-            and that radio browsing is available in your region. Personal
-            stations are also accessible via Search (try "Apple Music 1",
-            "Apple Music Hits", or an artist name + "radio").
-          </div>
-        </div>
       ) : isTrackList(top.node?.children || [])
           ? <TrackList items={top.node.children} parent={top.node} onEnter={enter} onPlayInList={playTrackInList} />
           : <ItemGrid items={top.node?.children || []} onEnter={enter} isPinned={isPinned} togglePin={togglePin} />
