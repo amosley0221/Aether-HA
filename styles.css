@@ -438,6 +438,15 @@ input { font: inherit; color: inherit; }
    shrinks. Grids collapse to fewer columns. Page-specific overrides
    live in home.css / music.css / dashboard.css.
 ─────────────────────────────────────────────────────────────────────── */
+/* Foldables / portrait tablets: simplify the brandbar so all the
+   right-side chips have room without wrapping or stacking. The Æ logo
+   carries the brand and the active nav tab tells you the page. */
+@media (max-width: 960px) {
+  .brand-name { display: none; }
+  .brand-pill { display: none; }
+  .nav-tabs   { margin-left: 4px; }
+}
+
 @media (max-width: 720px) {
   .brandbar {
     padding: 10px 14px;
