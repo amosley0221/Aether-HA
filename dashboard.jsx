@@ -210,13 +210,16 @@ function DashboardPage() {
   // ─── Car (Tesla) ───────────────────────────────────────────────────────
   const carCfg = cfg.car;
   const hasCar = carCfg && hass?.states?.[carCfg.entities?.lock];
+  const tvCfg = cfg.appleTV;
+  const hasTV = tvCfg && tvCfg.remote && hass?.states?.[tvCfg.remote];
 
   // ─── Filters ────────────────────────────────────────────────────────────
   // Counts and visibility reflect post-hidden lists. A section is only
   // rendered if not in hidden.sections AND it has at least one visible item.
   const filters = [
-    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + visLights.length + vCameras.length + vClimates.length + visRooms.length },
+    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + (hasTV ? 1 : 0) + visLights.length + vCameras.length + vClimates.length + visRooms.length },
     ...(hasCar ? [{ key: "Car", icon: "car", count: 1 }] : []),
+    ...(hasTV  ? [{ key: "TV",  icon: "tv",  count: 1 }] : []),
     { key: "Lights",   icon: "bulb",    count: visLights.length },
     { key: "Cameras",  icon: "camera",  count: vCameras.length },
     { key: "Climate",  icon: "thermo",  count: vClimates.length },
@@ -280,6 +283,16 @@ function DashboardPage() {
           hass={hass}
           editMode={editMode}
           onHideSection={() => hideSection("Car")}
+        />
+      )}
+
+      {/* Apple TV */}
+      {show("TV") && hasTV && (
+        <AppleTVSection
+          tv={tvCfg}
+          hass={hass}
+          editMode={editMode}
+          onHideSection={() => hideSection("TV")}
         />
       )}
 
@@ -1062,6 +1075,149 @@ function CarSection({ car, hass, editMode, onHideSection }) {
             <button className="car-btn" onClick={openTrunk}>
               <Icon name="grid" size={14} /> Trunk
             </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Apple TV remote ──────────────────────────────────────────────────────
+// Controls an Apple TV via HA's Apple TV integration. D-pad + select +
+// menu/home/play/Siri go through remote.send_command. App shortcuts
+// launch via media_player.select_source (the integration registers each
+// installed app as a selectable source). Volume slider drives the
+// configured speaker (usually the Sonos soundbar the ATV outputs to).
+function AppleTVSection({ tv, hass, editMode, onHideSection }) {
+  const remoteId = tv.remote;
+  const mpId     = tv.mediaPlayer;
+  const volId    = tv.volumePlayer || mpId;
+  const mp       = hass?.states?.[mpId];
+  const vol      = hass?.states?.[volId];
+  const remote   = hass?.states?.[remoteId];
+
+  const apps = tv.apps || [];
+  const installed = mp?.attributes?.source_list || [];
+  const currentSource = mp?.attributes?.source;
+
+  const playing = mp?.state === "playing";
+  const off     = remote?.state === "off" || mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable";
+
+  const send = async (cmd) => {
+    if (!remoteId) return;
+    try {
+      await callService(hass, "remote.send_command",
+        { entity_id: remoteId, command: cmd });
+    } catch (e) { console.warn("[aether tv] send_command failed:", e); }
+  };
+  const launchApp = async (sourceName) => {
+    if (!mpId) return;
+    try {
+      await callService(hass, "media_player.select_source",
+        { entity_id: mpId, source: sourceName });
+    } catch (e) { console.warn("[aether tv] select_source failed:", e); }
+  };
+  const togglePower = async () => {
+    if (!mpId) return;
+    try {
+      await callService(hass, off ? "media_player.turn_on" : "media_player.turn_off",
+        { entity_id: mpId });
+    } catch (e) { console.warn("[aether tv] power failed:", e); }
+  };
+  const setVolume = (v) => {
+    if (!volId) return;
+    callService(hass, "media_player.volume_set",
+      { entity_id: volId, volume_level: v / 100 });
+  };
+
+  const volumeLevel = Math.round(((vol?.attributes?.volume_level) ?? 0) * 100);
+  const volumeMuted = !!vol?.attributes?.is_volume_muted;
+  const art         = mp?.attributes?.entity_picture;
+  const title       = mp?.attributes?.media_title || (off ? "Off" : "Apple TV");
+  const subtitle    = [mp?.attributes?.media_artist, mp?.attributes?.media_album_name]
+                        .filter(Boolean).join(" · ")
+                     || (currentSource && currentSource !== "Apple TV" ? currentSource : "");
+
+  return (
+    <>
+      <div className="dash-section-head">
+        <h2>Apple TV</h2>
+        <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span>{off ? "Off" : (playing ? "Playing" : currentSource || "Idle")}</span>
+          {editMode && (
+            <button className="section-hide-btn" onClick={onHideSection}>Hide section</button>
+          )}
+        </div>
+      </div>
+
+      <div className="atv-card">
+        <div className="atv-left">
+          <div className="atv-now">
+            <div
+              className="atv-art"
+              style={art ? {
+                backgroundImage: `url('${art}')`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              } : undefined}
+            >
+              {!art && <Icon name="tv" size={30} />}
+            </div>
+            <div className="atv-meta">
+              <div className="atv-title">{title}</div>
+              {subtitle && <div className="atv-subtitle">{subtitle}</div>}
+            </div>
+            <button
+              className={"atv-power" + (off ? " off" : "")}
+              onClick={togglePower}
+              title={off ? "Turn on" : "Turn off"}
+            >
+              <Icon name="power" size={18} />
+            </button>
+          </div>
+
+          <div className="atv-volume">
+            <Icon name="volume" size={14} />
+            <input
+              type="range" min="0" max="100" value={volumeLevel}
+              onChange={(e) => setVolume(Number(e.target.value))}
+              disabled={!volId}
+            />
+            <span className="atv-vol-pct">{volumeMuted ? "Muted" : `${volumeLevel}%`}</span>
+          </div>
+
+          <div className="atv-apps">
+            {apps.map(app => {
+              const exists = installed.length === 0 || installed.includes(app.source);
+              const active = currentSource === app.source;
+              return (
+                <button
+                  key={app.name}
+                  className={"atv-app" + (active ? " active" : "")}
+                  onClick={() => launchApp(app.source)}
+                  disabled={!exists}
+                  title={exists ? `Launch ${app.name}` : `${app.source} not found in Apple TV's source list`}
+                >
+                  {app.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="atv-remote">
+          <div className="atv-dpad">
+            <button className="atv-btn atv-dpad-up"     onClick={() => send("up")}><Icon name="chevUp" size={20}/></button>
+            <button className="atv-btn atv-dpad-left"   onClick={() => send("left")}><Icon name="chevLeft" size={20}/></button>
+            <button className="atv-btn atv-dpad-select" onClick={() => send("select")}>OK</button>
+            <button className="atv-btn atv-dpad-right"  onClick={() => send("right")}><Icon name="chevRight" size={20}/></button>
+            <button className="atv-btn atv-dpad-down"   onClick={() => send("down")}><Icon name="chevDown" size={20}/></button>
+          </div>
+          <div className="atv-row">
+            <button className="atv-btn" onClick={() => send("menu")} title="Back / Menu"><Icon name="back" size={18}/></button>
+            <button className="atv-btn" onClick={() => send("home")} title="Home (TV button)"><Icon name="tv" size={18}/></button>
+            <button className="atv-btn" onClick={() => send("play_pause")} title="Play / Pause"><Icon name={playing ? "pause" : "play"} size={18}/></button>
+            <button className="atv-btn" onClick={() => send("siri")} title="Siri"><Icon name="mic" size={18}/></button>
           </div>
         </div>
       </div>

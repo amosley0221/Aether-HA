@@ -83,6 +83,13 @@ const Icon = ({ name, size = 16 }) => {
     bolt:    <svg viewBox="0 0 24 24" width={size} height={size}><path d="M13 2L4 14h7l-2 8 11-14h-7l2-6z" fill="currentColor"/></svg>,
     mic:     <svg viewBox="0 0 24 24" width={size} height={size}><rect x="9" y="3" width="6" height="12" rx="3" {...p}/><path {...p} d="M5 11a7 7 0 0 0 14 0"/><path {...p} d="M12 18v3"/><path {...p} d="M8 21h8"/></svg>,
     car:     <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M5 14l1.5-5A2 2 0 0 1 8.4 7.5h7.2a2 2 0 0 1 1.9 1.5L19 14M5 14h14M5 14v3.5a1 1 0 0 0 1 1h1.5a1 1 0 0 0 1-1V17M17.5 17v.5a1 1 0 0 0 1 1H20a1 1 0 0 0 1-1V14"/><circle cx="8" cy="14.5" r="1" fill="currentColor"/><circle cx="16" cy="14.5" r="1" fill="currentColor"/></svg>,
+    tv:      <svg viewBox="0 0 24 24" width={size} height={size}><rect x="3" y="5" width="18" height="12" rx="2" {...p}/><path {...p} d="M8 21h8M12 17v4"/></svg>,
+    power:   <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M12 3v9"/><path {...p} d="M7.5 6.5a7 7 0 1 0 9 0"/></svg>,
+    chevUp:    <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M6 15l6-6 6 6"/></svg>,
+    chevDown:  <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M6 9l6 6 6-6"/></svg>,
+    chevLeft:  <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M15 6l-6 6 6 6"/></svg>,
+    chevRight: <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M9 6l6 6-6 6"/></svg>,
+    back:    <svg viewBox="0 0 24 24" width={size} height={size}><path {...p} d="M10 6l-6 6 6 6"/><path {...p} d="M4 12h13a4 4 0 0 1 0 8h-2"/></svg>,
   };
   return svgs[name] || null;
 };

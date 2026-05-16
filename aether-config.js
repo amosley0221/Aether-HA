@@ -236,6 +236,33 @@ const AETHER_CONFIG = {
     },
   },
 
+  // Apple TV remote on the dashboard. Set `remote` to your HA Apple TV
+  // remote entity (created automatically by the Apple TV integration when
+  // you pair it). `mediaPlayer` is the matching media_player entity used
+  // for now-playing info, power, and the app launcher. `volumePlayer` is
+  // the speaker whose volume the slider should drive — typically the
+  // Sonos soundbar the Apple TV is plugged into (Playbase / Arc / Beam),
+  // since the Apple TV's own volume calls go through HDMI-CEC.
+  //
+  // `apps`: each entry's `source` must exactly match the human-readable
+  // app name as it appears in the Apple TV's installed-apps list (you
+  // can verify in HA → Developer Tools → States →
+  // media_player.<your_apple_tv> → attributes.source_list). Leave the
+  // whole `appleTV` block out (or set remote/mediaPlayer to null) to
+  // hide the section.
+  appleTV: {
+    remote:       "remote.living_room",                 // e.g. remote.living_room_apple_tv
+    mediaPlayer:  "media_player.living_room_apple_tv",  // Apple TV media_player
+    volumePlayer: "media_player.living_room",           // Sonos Playbase
+    apps: [
+      { name: "Netflix",    source: "Netflix" },
+      { name: "YouTube TV", source: "YouTube TV" },
+      { name: "YouTube",    source: "YouTube" },
+      { name: "Twitch",     source: "Twitch" },
+      { name: "Plex",       source: "Plex" },
+    ],
+  },
+
   // Lights that aren't pinned to a room above. Shown under "All lights" on
   // the dashboard so nothing is hidden.
   globalLights: [
