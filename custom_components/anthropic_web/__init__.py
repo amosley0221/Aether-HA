@@ -22,6 +22,7 @@ from homeassistant.core import (
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
 DOMAIN = "anthropic_web"
 
@@ -32,13 +33,31 @@ CONF_MAX_TOKENS = "max_tokens"
 CONF_DEFAULT_MAX_USES = "default_max_uses"
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
-DEFAULT_MAX_TOKENS = 2048
-DEFAULT_MAX_USES = 3
+DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_USES = 5
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a research assistant with access to the web_search tool. "
-    "Use it to find current, accurate information when answering. "
-    "Reply concisely and directly - no preamble, no caveats. "
-    "If sources disagree, briefly note that."
+    "You are a knowledgeable friend who can quickly check the web for "
+    "current information. Search as needed, then talk to the user like a "
+    "person texting back - warm, casual, direct.\n\n"
+    "STYLE:\n"
+    "- 1 to 3 sentences. Conversational tone. Contractions are good.\n"
+    "- Lead with the answer. No preamble, no recap of the question.\n"
+    "- Sports: give the score and a quick highlight if there is one.\n"
+    "- News: say what happened plainly.\n"
+    "- Prices: state the current price.\n\n"
+    "DO NOT:\n"
+    "- Narrate your search ('I searched...', 'Let me check...', 'Based on "
+    "the results...', 'I can see...').\n"
+    "- List sources or URLs in the response.\n"
+    "- Report partial or conflicting findings - resolve them silently and "
+    "state the answer.\n"
+    "- Trust ticket-sales sites (Ticketmaster, StubHub) for completed game "
+    "results; they only show upcoming scheduled games.\n"
+    "- Hedge unnecessarily or mention timezones/schedules unless that IS "
+    "the answer.\n\n"
+    "If you truly cannot find the answer after thorough searching, say so "
+    "naturally in one sentence (e.g. 'Couldn't find that one - the game "
+    "might still be in progress')."
 )
 
 CONFIG_SCHEMA = vol.Schema(
@@ -116,11 +135,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         query: str = call.data["query"]
         max_uses: int = call.data.get("max_uses", default_max_uses)
 
+        # Inject the current local date/time so the model knows what "today",
+        # "yesterday", "last night", etc. actually mean. Without this, Claude
+        # often guesses a date from search-result headers (which can be off
+        # by a day) or falls back to its training cutoff.
+        now = dt_util.now()
+        date_str = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
+        augmented_system = f"{system_prompt}\n\nCurrent local date and time: {date_str}"
+
         try:
             response = await client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                system=system_prompt,
+                system=augmented_system,
                 tools=[
                     {
                         "type": "web_search_20250305",
@@ -139,25 +166,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         # Anthropic returns a list of content blocks. With web_search the model
         # may emit server_tool_use / web_search_tool_result blocks interleaved
-        # with its own text blocks. We only need the text it speaks back.
-        text_parts: list[str] = []
+        # with text blocks. To suppress the chain-of-thought narration that
+        # the model writes BETWEEN search calls, we only keep the LAST text
+        # block in the response — that's the model's final synthesized
+        # answer after all tool calls are done.
+        text_blocks: list[str] = []
         for block in response.content:
             text = getattr(block, "text", None)
             if text:
-                text_parts.append(text)
+                text_blocks.append(text)
 
-        # Collect citation URLs if present so the upstream agent can mention
-        # them. Anthropic puts these on text blocks as `citations`.
-        citations: list[str] = []
-        for block in response.content:
-            for cite in getattr(block, "citations", None) or []:
-                url = getattr(cite, "url", None)
-                if url and url not in citations:
-                    citations.append(url)
-
-        result_text = "\n\n".join(text_parts).strip() or "No answer returned."
-        if citations:
-            result_text += "\n\nSources: " + ", ".join(citations[:5])
+        result_text = text_blocks[-1].strip() if text_blocks else "No answer returned."
 
         return {"result": result_text}
 
