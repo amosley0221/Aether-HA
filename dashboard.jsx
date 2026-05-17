@@ -212,20 +212,25 @@ function DashboardPage() {
   const hasCar = carCfg && hass?.states?.[carCfg.entities?.lock];
   const tvCfg = cfg.appleTV;
   const hasTV = tvCfg && tvCfg.remote && hass?.states?.[tvCfg.remote];
-  const lgCfg = cfg.lgTV;
-  // LG section is visible if a mediaPlayer is configured and exists.
-  // The optional `remote` entity is preferred for d-pad keys; without it
-  // the section falls back to the webostv.button service via the
-  // media_player, so older HA integrations still work.
-  const hasLG = lgCfg && lgCfg.mediaPlayer && hass?.states?.[lgCfg.mediaPlayer];
+  // LG TVs: support both legacy single-TV (cfg.lgTV) and new array
+  // (cfg.lgTVs) configs. Each TV needs a mediaPlayer that exists in
+  // hass.states; the optional `remote` entity is preferred for d-pad
+  // keys but without it the section falls back to webostv.button.
+  const lgList = (Array.isArray(cfg.lgTVs) && cfg.lgTVs.length)
+    ? cfg.lgTVs
+    : (cfg.lgTV ? [cfg.lgTV] : []);
+  const visibleLgTvs = lgList.filter(
+    (t) => t && t.mediaPlayer && hass?.states?.[t.mediaPlayer]
+  );
+  const hasLG = visibleLgTvs.length > 0;
 
   // ─── Filters ────────────────────────────────────────────────────────────
   // Counts and visibility reflect post-hidden lists. A section is only
   // rendered if not in hidden.sections AND it has at least one visible item.
   const filters = [
-    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + (hasTV ? 1 : 0) + (hasLG ? 1 : 0) + visLights.length + vCameras.length + vClimates.length + visRooms.length },
+    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + (hasTV ? 1 : 0) + visibleLgTvs.length + visLights.length + vCameras.length + vClimates.length + visRooms.length },
     ...(hasCar ? [{ key: "Car", icon: "car", count: 1 }] : []),
-    ...((hasTV || hasLG) ? [{ key: "TV", icon: "tv", count: (hasTV ? 1 : 0) + (hasLG ? 1 : 0) }] : []),
+    ...((hasTV || hasLG) ? [{ key: "TV", icon: "tv", count: (hasTV ? 1 : 0) + visibleLgTvs.length }] : []),
     { key: "Lights",   icon: "bulb",    count: visLights.length },
     { key: "Cameras",  icon: "camera",  count: vCameras.length },
     { key: "Climate",  icon: "thermo",  count: vClimates.length },
@@ -302,15 +307,16 @@ function DashboardPage() {
         />
       )}
 
-      {/* LG webOS TV */}
-      {show("TV") && hasLG && (
+      {/* LG webOS TVs (one section per configured TV/monitor) */}
+      {show("TV") && visibleLgTvs.map((lg, i) => (
         <LGTVSection
-          tv={lgCfg}
+          key={lg.mediaPlayer || i}
+          tv={lg}
           hass={hass}
           editMode={editMode}
           onHideSection={() => hideSection("TV")}
         />
-      )}
+      ))}
 
       {/* Lights */}
       {show("Lights") && visLights.length > 0 && (
@@ -1528,7 +1534,7 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
   return (
     <>
       <div className="dash-section-head">
-        <h2>LG TV · Office</h2>
+        <h2>{tv.name || "LG TV"}</h2>
         <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <span>{off ? "Off" : (playing ? "Playing" : currentSource || "On")}</span>
           {editMode && (

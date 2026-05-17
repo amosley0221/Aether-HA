@@ -268,49 +268,68 @@ const AETHER_CONFIG = {
     ],
   },
 
-  // LG webOS TV remote (Office). The HA webOSTV integration creates
-  // a media_player entity per TV; newer versions also create a
-  // `remote.*` entity. If you don't have a remote entity, just leave
-  // `remote: null` and the section falls back to the
-  // `webostv.button` service via the media_player.
+  // LG webOS TVs (one entry per TV/monitor). The HA webOSTV
+  // integration creates a media_player entity per device; newer
+  // versions also create a `remote.*` entity. Leave `remote: null`
+  // and the section falls back to the `webostv.button` service via
+  // the media_player.
   //
   // Pick the media_player entity that exposes the FULL `source_list`
   // (apps + inputs) - on installs with Music Assistant, the bare
   // `media_player.<tv>` entity is MA's wrapper and won't have the
-  // app list. Use the `_2` (or `_3`) sibling for the actual TV.
+  // app list. Use the `_2` (or `_3`) sibling for the actual device.
   //
-  // Volume controls the TV itself (which drives the connected
-  // soundbar via HDMI ARC or optical, independent of the room's
-  // Sonos). Apps use `select_source` against the names that appear
-  // in the TV's `source_list` attribute - same strings the LG
-  // remote shows when you press the Input button.
+  // Apps use `select_source` against the names that appear in the
+  // TV's `source_list` attribute - same strings the LG remote shows
+  // when you press the Input button.
   //
-  // `inputs`: leave empty to auto-detect (everything in source_list
-  // matching HDMI/Live TV/Component/etc.), or hardcode a list to
-  // override the auto-detection order/names.
-  lgTV: {
-    remote:       null,                                     // optional - leave null to use webostv.button
-    mediaPlayer:  "media_player.lg_webos_tv_nano85una_2",   // the real LG TV (NOT the MA-wrapped sibling)
-    // Wake-on-LAN MAC address (wireless or wired). When the TV is "off"
-    // its WebOS service is unreachable, so Aether sends a magic packet
-    // before `media_player.turn_on` to bring it back online. Requires
-    // `wake_on_lan:` enabled in configuration.yaml AND the TV's "Mobile
-    // TV On" / "Wake On LAN" setting enabled. Leave null to disable.
-    wakeOnLanMac: "58:FD:B1:11:A3:D9",
-    apps: [
-      { name: "Netflix",    source: "Netflix" },
-      { name: "YouTube TV", source: "YouTube TV" },
-      { name: "YouTube",    source: "YouTube" },
-      { name: "Twitch",     source: "Twitch" },
-      { name: "Plex",       source: "Plex" },
-    ],
-    inputs: [
-      { name: "PC",     source: "PC" },       // device-labeled HDMI 1 (auto-relabel when device on)
-      { name: "HDMI 2", source: "HDMI 2" },
-      { name: "HDMI 3", source: "HDMI 3" },
-      { name: "PS5",    source: "PS5" },      // device-labeled HDMI 4
-    ],
-  },
+  // Volume goes through webostv.button VOLUMEUP/VOLUMEDOWN so the
+  // soundbar (via HDMI ARC/CEC) responds, same as the physical remote.
+  //
+  // `inputs`: hardcoded list of input tiles (no auto-detection).
+  //
+  // `wakeOnLanMac`: optional. When set, Aether sends a WoL magic
+  // packet on power-on. Requires `wake_on_lan:` in
+  // configuration.yaml and the TV's "Mobile TV On" setting enabled.
+  lgTVs: [
+    {
+      name:         "LG TV · Office",                          // section heading
+      remote:       null,
+      mediaPlayer:  "media_player.lg_webos_tv_nano85una_2",
+      wakeOnLanMac: "58:FD:B1:11:A3:D9",
+      apps: [
+        { name: "Netflix",    source: "Netflix" },
+        { name: "YouTube TV", source: "YouTube TV" },
+        { name: "YouTube",    source: "YouTube" },
+        { name: "Twitch",     source: "Twitch" },
+        { name: "Plex",       source: "Plex" },
+      ],
+      inputs: [
+        { name: "PC",     source: "PC" },       // device-labeled HDMI 1 (auto-relabel when device on)
+        { name: "HDMI 2", source: "HDMI 2" },
+        { name: "HDMI 3", source: "HDMI 3" },
+        { name: "PS5",    source: "PS5" },      // device-labeled HDMI 4
+      ],
+    },
+    {
+      name:         "LG Swing Monitor · Office",
+      remote:       null,
+      mediaPlayer:  "media_player.lg_webos_u889sa_2",
+      wakeOnLanMac: null,                       // add MAC here later if WoL needed
+      apps: [
+        { name: "Netflix",    source: "Netflix" },
+        { name: "YouTube TV", source: "YouTube TV" },
+        { name: "YouTube",    source: "YouTube" },
+        { name: "Twitch",     source: "Twitch" },
+        { name: "Plex",       source: "Plex" },
+      ],
+      inputs: [
+        { name: "USB-C",  source: "USB-C" },
+        { name: "HDMI 1", source: "HDMI 1" },
+        { name: "HDMI 2", source: "HDMI 2" },
+      ],
+    },
+  ],
 
   // Lights that aren't pinned to a room above. Shown under "All lights" on
   // the dashboard so nothing is hidden.
