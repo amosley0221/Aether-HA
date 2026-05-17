@@ -1398,10 +1398,8 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
     setLoading(true);
     setErr(null);
     (async () => {
-      // MA's WS command names for queue access have churned across major
-      // versions. Try every variant we know of - the first one that
-      // doesn't throw "Unknown command" wins.
-      const tries = [
+      // Strategy 1: try every MA WS command variant we know of.
+      const wsTries = [
         { type: "music_assistant/players/queue_items",      queue_id: entityId, limit: 50 },
         { type: "music_assistant/get_player_queue_items",   queue_id: entityId, limit: 50 },
         { type: "music_assistant/get_player_queue_items",   player_id: entityId, limit: 50 },
@@ -1411,7 +1409,7 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
       ];
       let got = null;
       let lastErr = null;
-      for (const msg of tries) {
+      for (const msg of wsTries) {
         try {
           console.log("[Aether queue] trying", msg.type);
           got = await hassRef.current.callWS(msg);
@@ -1419,10 +1417,42 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
           break;
         } catch (e) { lastErr = e; }
       }
+
+      // Strategy 2: walk the player's browse_media tree looking for a
+      // "Queue" / "Now Playing" / "Up Next" folder. MA exposes queue
+      // items as a browsable node on most versions.
+      if (!got) {
+        try {
+          console.log("[Aether queue] trying browse_media tree for Queue node");
+          const root = await hassRef.current.callWS({
+            type: "media_player/browse_media",
+            entity_id: entityId,
+          });
+          const queueCandidate = (root.children || []).find((c) => {
+            const t = (c.title || "").toLowerCase();
+            return /\b(queue|up\s*next|now\s*playing)\b/.test(t);
+          });
+          if (queueCandidate?.can_expand) {
+            const queueNode = await hassRef.current.callWS({
+              type: "media_player/browse_media",
+              entity_id: entityId,
+              media_content_id:   queueCandidate.media_content_id,
+              media_content_type: queueCandidate.media_content_type,
+            });
+            if (queueNode.children?.length) {
+              console.log("[Aether queue] found via browse_media:", queueNode.children.length, "items");
+              got = queueNode.children;
+            }
+          }
+        } catch (e) {
+          console.log("[Aether queue] browse_media path failed:", e?.message);
+        }
+      }
+
       if (got) {
         setItems(Array.isArray(got) ? got : (got.items || got.queue_items || []));
       } else {
-        console.log("[Aether queue] all WS attempts failed:", lastErr?.message);
+        console.log("[Aether queue] all attempts failed:", lastErr?.message);
         setErr(lastErr?.message || "Queue unavailable");
       }
       setLoading(false);
