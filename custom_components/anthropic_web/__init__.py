@@ -10,6 +10,7 @@ script as a tool whenever it needs current information.
 """
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any
 
@@ -37,7 +38,7 @@ DEFAULT_MAX_USES = 3
 DEFAULT_SYSTEM_PROMPT = (
     "You are a research assistant with access to the web_search tool. "
     "Use it to find current, accurate information when answering. "
-    "Reply concisely and directly — no preamble, no caveats. "
+    "Reply concisely and directly - no preamble, no caveats. "
     "If sources disagree, briefly note that."
 )
 
@@ -70,6 +71,19 @@ SERVICE_SCHEMA = vol.Schema(
 _LOGGER = logging.getLogger(__name__)
 
 
+def _import_anthropic():
+    """Synchronously import the anthropic package + its resources submodule.
+
+    Pulled into an executor so it doesn't race the official Anthropic
+    Conversation integration during HA startup — concurrent imports of
+    the same package from two integrations can deadlock on
+    `_ModuleLock('anthropic.resources')`.
+    """
+    mod = importlib.import_module("anthropic")
+    importlib.import_module("anthropic.resources")
+    return mod
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the search service from configuration.yaml settings."""
     conf = config.get(DOMAIN)
@@ -80,8 +94,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
         return False
 
-    # Import here so HA installs the requirement before we hit it.
-    import anthropic
+    anthropic = await hass.async_add_executor_job(_import_anthropic)
 
     api_key: str = conf[CONF_API_KEY]
     model: str = conf[CONF_MODEL]
