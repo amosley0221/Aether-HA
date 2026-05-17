@@ -164,19 +164,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             _LOGGER.exception("Unexpected error during web search")
             return {"result": f"Search failed: {err}"}
 
-        # Anthropic returns a list of content blocks. With web_search the model
-        # may emit server_tool_use / web_search_tool_result blocks interleaved
-        # with text blocks. To suppress the chain-of-thought narration that
-        # the model writes BETWEEN search calls, we only keep the LAST text
-        # block in the response — that's the model's final synthesized
-        # answer after all tool calls are done.
-        text_blocks: list[str] = []
-        for block in response.content:
+        # Anthropic returns a list of content blocks. With web_search, the
+        # model writes thinking-out-loud text BETWEEN successive search calls
+        # ("I need another search..."), then writes its final answer at the
+        # end. The final answer itself can span multiple text blocks (a
+        # headline sentence + a context sentence). To get a clean answer
+        # without the narration, find the LAST tool-use / tool-result block
+        # and concatenate every text block that comes AFTER it.
+        TOOL_BLOCK_TYPES = {"tool_use", "server_tool_use", "web_search_tool_result"}
+        last_tool_idx = -1
+        for i, block in enumerate(response.content):
+            if getattr(block, "type", "") in TOOL_BLOCK_TYPES:
+                last_tool_idx = i
+
+        final_parts: list[str] = []
+        for block in response.content[last_tool_idx + 1:]:
             text = getattr(block, "text", None)
             if text:
-                text_blocks.append(text)
+                final_parts.append(text)
 
-        result_text = text_blocks[-1].strip() if text_blocks else "No answer returned."
+        result_text = " ".join(p.strip() for p in final_parts).strip() \
+                      or "No answer returned."
 
         return {"result": result_text}
 
