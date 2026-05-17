@@ -70,9 +70,108 @@ function App() {
     };
   }, [voiceEnabled, wakeWord, chatOpen]);
 
-  const meshAvail = hass ? Object.values(hass.states).filter(
-    s => s.entity_id.startsWith("device_tracker.") && s.state === "home"
-  ).length : null;
+  // ─── Brandbar status pills ───────────────────────────────────────────
+  // Left pill scans for active issues:
+  //   - battery_level / battery_percent sensors below 20%
+  //   - any entity in `unavailable` state (excluding diagnostic-only ones)
+  //   - update entities with state "on" (HA Core, integrations, HACS)
+  // Right pill auto-detects a Deco mesh integration. Falls back to a
+  // generic internet binary_sensor if Deco isn't found.
+  const [statusOpen, setStatusOpen] = React.useState(false);
+
+  const issues = React.useMemo(() => {
+    if (!hass) return { batteries: [], unavailable: [], updates: [] };
+    const states = Object.values(hass.states);
+    const batteries = states.filter((s) => {
+      if (s.attributes?.device_class !== "battery") return false;
+      const n = Number(s.state);
+      return Number.isFinite(n) && n > 0 && n <= 20;
+    }).map((s) => ({
+      entity_id: s.entity_id,
+      name: s.attributes?.friendly_name || s.entity_id,
+      level: Math.round(Number(s.state)),
+    }));
+
+    // Skip diagnostic noise: events, persistent_notification, plus anything
+    // whose entity_category is "diagnostic" / "config".
+    const unavailable = states.filter((s) => {
+      if (s.state !== "unavailable") return false;
+      if (s.entity_id.startsWith("persistent_notification.")) return false;
+      if (s.entity_id.startsWith("event.")) return false;
+      const cat = s.attributes?.entity_category;
+      if (cat === "diagnostic" || cat === "config") return false;
+      // Only count meaningful domains the user cares about.
+      const domain = s.entity_id.split(".")[0];
+      return ["light", "switch", "climate", "media_player", "lock",
+              "cover", "fan", "binary_sensor", "sensor", "camera",
+              "vacuum", "remote"].includes(domain);
+    }).map((s) => ({
+      entity_id: s.entity_id,
+      name: s.attributes?.friendly_name || s.entity_id,
+    }));
+
+    const updates = states.filter((s) =>
+      s.entity_id.startsWith("update.") && s.state === "on"
+    ).map((s) => ({
+      entity_id: s.entity_id,
+      name: s.attributes?.friendly_name || s.entity_id,
+      installed: s.attributes?.installed_version,
+      latest: s.attributes?.latest_version,
+    }));
+
+    return { batteries, unavailable, updates };
+  }, [hass]);
+
+  const totalIssues = issues.batteries.length + issues.unavailable.length + issues.updates.length;
+  const statusLabel = totalIssues === 0
+    ? "All systems normal"
+    : totalIssues === 1 ? "1 issue" : `${totalIssues} issues`;
+  const statusTone = totalIssues === 0 ? "ok"
+                   : issues.unavailable.length > 0 ? "alert"
+                   : "warn";
+
+  // Network/mesh pill. Try Deco entities first (HACS integration uses
+  // various naming conventions across versions), then fall back to a
+  // generic internet binary_sensor.
+  const networkInfo = React.useMemo(() => {
+    if (!hass) return null;
+    const states = Object.values(hass.states);
+
+    // Deco: look for sensors/binary_sensors whose entity_id mentions
+    // "deco" and an online-style attribute. Count nodes that are online.
+    const decoNodes = states.filter((s) =>
+      /\bdeco\b/i.test(s.entity_id + " " + (s.attributes?.friendly_name || "")) &&
+      s.entity_id.startsWith("binary_sensor.") &&
+      /\bonline\b/i.test(s.entity_id + " " + (s.attributes?.friendly_name || "")) &&
+      s.state !== "unavailable"
+    );
+    if (decoNodes.length) {
+      const online = decoNodes.filter((s) => s.state === "on").length;
+      return { label: `Deco · ${online}/${decoNodes.length}`, ok: online === decoNodes.length };
+    }
+
+    // Deco fallback: any Deco-named sensor showing connected client count.
+    const decoClients = states.find((s) =>
+      /\bdeco\b/i.test(s.entity_id) &&
+      /client|device/i.test(s.entity_id) &&
+      !Number.isNaN(Number(s.state))
+    );
+    if (decoClients) {
+      return { label: `Deco · ${decoClients.state} clients`, ok: true };
+    }
+
+    // Generic internet check.
+    const inet = states.find((s) =>
+      s.entity_id.startsWith("binary_sensor.") &&
+      /internet|wan|online/i.test(s.entity_id) &&
+      (s.state === "on" || s.state === "off")
+    );
+    if (inet) {
+      return { label: inet.state === "on" ? "Online" : "Offline", ok: inet.state === "on" };
+    }
+
+    return null;
+  }, [hass]);
 
   return (
     <div className="app-shell">
@@ -89,9 +188,17 @@ function App() {
           <button className={"nav-tab" + (page === "dashboard" ? " active" : "")} onClick={() => navigate("dashboard")}><Icon name="grid"/>  Dashboard</button>
         </nav>
         <div className="brand-spacer" />
-        <div className="brand-pill"><span className="dot" /> All systems normal</div>
-        {meshAvail != null && (
-          <div className="brand-pill"><Icon name="wifi" size={13} /> Mesh · {meshAvail}</div>
+        <button
+          className={"brand-pill brand-pill-clickable brand-pill-" + statusTone}
+          onClick={() => totalIssues > 0 && setStatusOpen(true)}
+          title={totalIssues > 0 ? "Tap to see details" : "Nothing needs attention"}
+        >
+          <span className="dot" /> {statusLabel}
+        </button>
+        {networkInfo && (
+          <div className={"brand-pill" + (networkInfo.ok ? "" : " brand-pill-warn")}>
+            <Icon name="wifi" size={13} /> {networkInfo.label}
+          </div>
         )}
         <div className="brand-avatar">
           {(window.AETHER_CONFIG?.user?.name || hass?.user?.name || "?").slice(0, 1).toUpperCase()}
@@ -123,6 +230,11 @@ function App() {
           />
         </>
       )}
+      <StatusDialog
+        open={statusOpen}
+        onClose={() => setStatusOpen(false)}
+        issues={issues}
+      />
     </div>
   );
 }
@@ -539,6 +651,77 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
           >
             <Icon name="next" size={16} />
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Status dialog: lists active issues from the brandbar status pill ────
+function StatusDialog({ open, onClose, issues }) {
+  if (!open) return null;
+  const total = issues.batteries.length + issues.unavailable.length + issues.updates.length;
+  return (
+    <div className="modal-backdrop" onClick={onClose} style={{ top: window.scrollY }}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>System status · {total} {total === 1 ? "issue" : "issues"}</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body" style={{ maxHeight: "70vh", overflowY: "auto" }}>
+          {issues.unavailable.length > 0 && (
+            <div className="status-group">
+              <div className="status-group-head">
+                <strong>Unavailable</strong>
+                <span className="status-count">{issues.unavailable.length}</span>
+              </div>
+              {issues.unavailable.map((i) => (
+                <div key={i.entity_id} className="status-row">
+                  <span className="status-name">{i.name}</span>
+                  <code className="status-entity">{i.entity_id}</code>
+                </div>
+              ))}
+            </div>
+          )}
+          {issues.batteries.length > 0 && (
+            <div className="status-group">
+              <div className="status-group-head">
+                <strong>Low batteries</strong>
+                <span className="status-count">{issues.batteries.length}</span>
+              </div>
+              {issues.batteries
+                .sort((a, b) => a.level - b.level)
+                .map((i) => (
+                <div key={i.entity_id} className="status-row">
+                  <span className="status-name">{i.name}</span>
+                  <span className={"status-battery" + (i.level <= 10 ? " critical" : "")}>
+                    {i.level}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {issues.updates.length > 0 && (
+            <div className="status-group">
+              <div className="status-group-head">
+                <strong>Updates available</strong>
+                <span className="status-count">{issues.updates.length}</span>
+              </div>
+              {issues.updates.map((i) => (
+                <div key={i.entity_id} className="status-row">
+                  <span className="status-name">{i.name}</span>
+                  <span className="status-version">
+                    {i.installed || "?"} → {i.latest || "?"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {total === 0 && (
+            <div style={{ color: "var(--ink-3)", padding: "12px 0" }}>
+              Everything looks good. No active issues.
+            </div>
+          )}
         </div>
       </div>
     </div>

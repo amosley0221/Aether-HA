@@ -123,6 +123,43 @@ input { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 8px;
 }
 .brand-pill .dot { width: 6px; height: 6px; border-radius: 999px; background: #44b88a; box-shadow: 0 0 0 3px rgba(68,184,138,.18); }
+.brand-pill-clickable { cursor: pointer; transition: background .15s; }
+.brand-pill-clickable:hover { background: rgba(255,255,255,.9); }
+.brand-pill-warn { color: #8a5a14; border-color: rgba(220,150,40,.4); background: rgba(255,238,200,.7); }
+.brand-pill-warn .dot { background: #d8a23a; box-shadow: 0 0 0 3px rgba(216,162,58,.22); }
+.brand-pill-alert { color: #8a2a14; border-color: rgba(220,80,60,.5); background: rgba(255,220,210,.85); }
+.brand-pill-alert .dot { background: #d8462e; box-shadow: 0 0 0 3px rgba(216,70,46,.22); animation: aether-pulse 1.6s ease-in-out infinite; }
+@keyframes aether-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(216,70,46,.22); }
+  50%      { box-shadow: 0 0 0 5px rgba(216,70,46,.08); }
+}
+
+/* Status dialog rows */
+.status-group { margin-bottom: 18px; }
+.status-group:last-child { margin-bottom: 0; }
+.status-group-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--ink-3); margin-bottom: 6px;
+}
+.status-group-head strong { color: var(--ink-2); font-weight: 600; }
+.status-count {
+  background: rgba(0,0,0,.06); color: var(--ink-2);
+  padding: 1px 8px; border-radius: 999px; font-size: 10px;
+}
+.status-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 8px 0;
+  border-bottom: 1px solid var(--hairline-2, rgba(0,0,0,.05));
+}
+.status-row:last-child { border-bottom: 0; }
+.status-name { color: var(--ink); font-size: 13px; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-entity { color: var(--ink-3); font-size: 11px;
+  background: rgba(0,0,0,.04); padding: 2px 6px; border-radius: 4px; }
+.status-battery { color: #8a5a14; font-weight: 600; font-size: 13px; }
+.status-battery.critical { color: #d8462e; }
+.status-version { color: var(--ink-3); font-size: 12px; }
 .brand-avatar {
   width: 30px; height: 30px; border-radius: 999px;
   background: linear-gradient(135deg, #d8a584, #8b5a3f);
