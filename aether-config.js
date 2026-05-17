@@ -336,6 +336,18 @@ const AETHER_CONFIG = {
     },
   ],
 
+  // Entities to skip in the brandbar's status pill (low batteries,
+  // unavailable entities, pending updates). Each entry is either an
+  // exact entity_id or a regex string. Useful for things like Ring's
+  // second-battery-slot sensor (only one battery is ever installed
+  // but both slots report independently), seasonal switches that are
+  // intentionally unplugged, or noisy diagnostic sensors.
+  statusPillIgnore: [
+    "sensor.front_battery_2",           // unused Ring camera slot
+    // "switch.holiday_lights",         // example: seasonal device
+    // "^sensor\\.guest_.*",            // example: guest-room entities
+  ],
+
   // Lights that aren't pinned to a room above. Shown under "All lights" on
   // the dashboard so nothing is hidden.
   globalLights: [

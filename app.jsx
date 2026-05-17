@@ -82,8 +82,21 @@ function App() {
   const issues = React.useMemo(() => {
     if (!hass) return { batteries: [], unavailable: [], updates: [] };
     const states = Object.values(hass.states);
+
+    // User-configurable ignore list from aether-config.js. Entries can be
+    // exact entity IDs ("sensor.front_battery_2") or regex strings
+    // ("^sensor\\.guest_.*"). Skipped from all three issue categories.
+    const ignoreList = window.AETHER_CONFIG?.statusPillIgnore || [];
+    const ignoreRegexes = ignoreList.map((p) => {
+      try { return new RegExp(p); } catch { return null; }
+    }).filter(Boolean);
+    const isIgnored = (entity_id) =>
+      ignoreList.includes(entity_id) ||
+      ignoreRegexes.some((r) => r.test(entity_id));
+
     const batteries = states.filter((s) => {
       if (s.attributes?.device_class !== "battery") return false;
+      if (isIgnored(s.entity_id)) return false;
       const n = Number(s.state);
       return Number.isFinite(n) && n > 0 && n <= 20;
     }).map((s) => ({
@@ -118,6 +131,7 @@ function App() {
 
     const unavailable = states.filter((s) => {
       if (s.state !== "unavailable") return false;
+      if (isIgnored(s.entity_id)) return false;
       const cat = s.attributes?.entity_category;
       if (cat === "diagnostic" || cat === "config") return false;
       if (MOBILE_APP_NOISE.test(s.entity_id)) return false;
@@ -129,7 +143,9 @@ function App() {
     }));
 
     const updates = states.filter((s) =>
-      s.entity_id.startsWith("update.") && s.state === "on"
+      s.entity_id.startsWith("update.") &&
+      s.state === "on" &&
+      !isIgnored(s.entity_id)
     ).map((s) => ({
       entity_id: s.entity_id,
       name: s.attributes?.friendly_name || s.entity_id,
