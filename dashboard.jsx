@@ -213,7 +213,11 @@ function DashboardPage() {
   const tvCfg = cfg.appleTV;
   const hasTV = tvCfg && tvCfg.remote && hass?.states?.[tvCfg.remote];
   const lgCfg = cfg.lgTV;
-  const hasLG = lgCfg && lgCfg.remote && hass?.states?.[lgCfg.remote];
+  // LG section is visible if a mediaPlayer is configured and exists.
+  // The optional `remote` entity is preferred for d-pad keys; without it
+  // the section falls back to the webostv.button service via the
+  // media_player, so older HA integrations still work.
+  const hasLG = lgCfg && lgCfg.mediaPlayer && hass?.states?.[lgCfg.mediaPlayer];
 
   // ─── Filters ────────────────────────────────────────────────────────────
   // Counts and visibility reflect post-hidden lists. A section is only
@@ -1424,12 +1428,13 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
   const remoteId = tv.remote;
   const mpId     = tv.mediaPlayer;
   const mp       = hass?.states?.[mpId];
-  const remote   = hass?.states?.[remoteId];
+  const remote   = remoteId ? hass?.states?.[remoteId] : null;
 
   const sourceList    = mp?.attributes?.source_list || [];
   const currentSource = mp?.attributes?.source;
   const playing       = mp?.state === "playing";
-  const off           = remote?.state === "off" || mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable";
+  const off           = mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable" ||
+                        (remote && remote.state === "off");
 
   // Inputs: hardcoded list from config if present, else auto-detected
   // from source_list by name pattern.
@@ -1442,8 +1447,11 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
   const apps = tv.apps || [];
 
   // LG d-pad mapping. The TVTrackpad component emits lowercase
-  // directional + "select" strings; LG's remote.send_command wants
-  // uppercase keycodes. Map at the boundary.
+  // directional + "select" strings; LG wants uppercase keycodes.
+  // Two service paths depending on what the integration exposes:
+  //   1) remote.send_command on a remote.* entity (newer integration)
+  //   2) webostv.button on the media_player entity (older integration —
+  //      no separate remote entity is created)
   const LG_KEY = {
     up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT",
     select: "ENTER",
@@ -1451,12 +1459,16 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
     play_pause: playing ? "PAUSE" : "PLAY",
   };
   const send = async (cmd) => {
-    if (!remoteId) return;
     const key = LG_KEY[cmd] || cmd.toUpperCase();
     try {
-      await callService(hass, "remote.send_command",
-        { entity_id: remoteId, command: key });
-    } catch (e) { console.warn("[aether lg-tv] send_command failed:", e); }
+      if (remoteId) {
+        await callService(hass, "remote.send_command",
+          { entity_id: remoteId, command: key });
+      } else if (mpId) {
+        await callService(hass, "webostv.button",
+          { entity_id: mpId, button: key });
+      }
+    } catch (e) { console.warn("[aether lg-tv] button failed:", e); }
   };
 
   const selectSource = async (source) => {

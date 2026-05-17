@@ -269,24 +269,28 @@ const AETHER_CONFIG = {
   },
 
   // LG webOS TV remote (Office). The HA webOSTV integration creates
-  // both a media_player and a remote entity per TV. Volume controls
-  // the TV itself (which drives the connected soundbar via its own
-  // pass-through, independent of the room's Sonos). Apps use
-  // `select_source` against the names that appear in the TV's own
-  // `source_list` attribute - same strings the LG remote shows when
-  // you press the Input button.
+  // a media_player entity per TV; newer versions also create a
+  // `remote.*` entity. If you don't have a remote entity, just leave
+  // `remote: null` and the section falls back to the
+  // `webostv.button` service via the media_player.
   //
-  // `apps`: items the user wants pinned (regardless of order in the
-  // TV's source_list). Each `source` must match an entry from
-  // attributes.source_list exactly. Verify in Developer Tools →
-  // States → your media_player.<lg_tv> → attributes.source_list.
+  // Pick the media_player entity that exposes the FULL `source_list`
+  // (apps + inputs) - on installs with Music Assistant, the bare
+  // `media_player.<tv>` entity is MA's wrapper and won't have the
+  // app list. Use the `_2` (or `_3`) sibling for the actual TV.
+  //
+  // Volume controls the TV itself (which drives the connected
+  // soundbar via HDMI ARC or optical, independent of the room's
+  // Sonos). Apps use `select_source` against the names that appear
+  // in the TV's `source_list` attribute - same strings the LG
+  // remote shows when you press the Input button.
   //
   // `inputs`: leave empty to auto-detect (everything in source_list
   // matching HDMI/Live TV/Component/etc.), or hardcode a list to
-  // override the auto-detection order.
+  // override the auto-detection order/names.
   lgTV: {
-    remote:       "remote.lg_webos_tv_nano85una",        // ← your LG remote entity
-    mediaPlayer:  "media_player.lg_webos_tv_nano85una",  // ← your LG media_player
+    remote:       null,                                     // optional - leave null to use webostv.button
+    mediaPlayer:  "media_player.lg_webos_tv_nano85una_2",   // the real LG TV (NOT the MA-wrapped sibling)
     apps: [
       { name: "Netflix",  source: "Netflix" },
       { name: "YouTube",  source: "YouTube" },
