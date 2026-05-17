@@ -24,31 +24,49 @@ function App() {
     recognition.continuous = true;
     recognition.interimResults = true;
     let stopped = false;
+    let restartTimer = null;
     const wake = wakeWord.toLowerCase().trim();
 
     recognition.onresult = (e) => {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const transcript = e.results[i][0]?.transcript?.toLowerCase() || "";
         if (transcript.includes(wake)) {
+          console.log("[Aether voice] wake word matched:", transcript);
           stopped = true;
-          try { recognition.stop(); } catch {}
-          setChatAutoListen(true);
-          setChatOpen(true);
+          // abort() releases the mic immediately. stop() lingers and can
+          // block the chat dialog's mic recognizer from acquiring it.
+          try { recognition.abort(); } catch {}
+          // Give Android WebView a beat to release the mic device before
+          // the chat dialog tries to grab it.
+          setTimeout(() => {
+            setChatAutoListen(true);
+            setChatOpen(true);
+          }, 150);
           return;
         }
       }
     };
-    recognition.onerror = () => { /* silently ignore — restart loop covers it */ };
-    recognition.onend = () => {
-      // Auto-restart while we're still supposed to be listening
-      if (!stopped) {
-        try { recognition.start(); } catch {}
-      }
+    recognition.onerror = (e) => {
+      console.log("[Aether voice] wake recognition error:", e.error);
     };
-    try { recognition.start(); } catch {}
+    recognition.onend = () => {
+      // Web Speech ends sessions every ~60s on Android WebView. Restart
+      // unless we intentionally stopped. Small backoff so we don't busy-loop
+      // if start() keeps failing.
+      if (stopped) return;
+      restartTimer = setTimeout(() => {
+        try { recognition.start(); } catch (err) {
+          console.log("[Aether voice] wake restart failed:", err);
+        }
+      }, 250);
+    };
+    try { recognition.start(); } catch (err) {
+      console.log("[Aether voice] wake start failed:", err);
+    }
     return () => {
       stopped = true;
-      try { recognition.stop(); } catch {}
+      if (restartTimer) clearTimeout(restartTimer);
+      try { recognition.abort(); } catch {}
     };
   }, [voiceEnabled, wakeWord, chatOpen]);
 
@@ -368,15 +386,31 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
     }
   }, [sttSupported, listening, voiceCfg.language, send]);
 
-  // Auto-start mic when chat was opened by the wake word
+  // Auto-start mic when chat was opened by the wake word.
+  // Two timers: a primary attempt 400ms after open (gives the wake-word
+  // recognizer time to fully release the mic), and a retry 1.2s later in
+  // case the first start() races with the abort. Consume the flag only
+  // after we've actually scheduled an attempt, so a stale autoListen
+  // doesn't get cleared before anything tries to listen.
   React.useEffect(() => {
-    if (open && autoListen && sttSupported) {
-      onAutoListenConsumed?.();
-      // Tiny delay so the dialog has mounted before mic acquires focus
-      const t = setTimeout(() => startListening(), 250);
-      return () => clearTimeout(t);
-    }
-  }, [open, autoListen, sttSupported, startListening, onAutoListenConsumed]);
+    if (!(open && autoListen && sttSupported)) return;
+    let cancelled = false;
+    const attemptListen = (label) => {
+      if (cancelled || listening) return;
+      console.log("[Aether voice] autoListen attempt:", label);
+      try { startListening(); } catch (err) {
+        console.log("[Aether voice] startListening threw:", err);
+      }
+    };
+    const t1 = setTimeout(() => attemptListen("primary"), 400);
+    const t2 = setTimeout(() => attemptListen("retry"), 1200);
+    onAutoListenConsumed?.();
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [open, autoListen, sttSupported, startListening, onAutoListenConsumed, listening]);
 
   const clearChat = () => {
     setMessages([]);
