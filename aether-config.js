@@ -292,14 +292,18 @@ const AETHER_CONFIG = {
     remote:       null,                                     // optional - leave null to use webostv.button
     mediaPlayer:  "media_player.lg_webos_tv_nano85una_2",   // the real LG TV (NOT the MA-wrapped sibling)
     apps: [
-      { name: "Netflix",  source: "Netflix" },
-      { name: "YouTube",  source: "YouTube" },
-      { name: "Twitch",   source: "Twitch" },
-      { name: "Plex",     source: "Plex" },
-      { name: "Disney+",  source: "Disney+" },
-      { name: "Prime Video", source: "Amazon Prime Video" },
+      { name: "Netflix",    source: "Netflix" },
+      { name: "YouTube TV", source: "YouTube TV" },
+      { name: "YouTube",    source: "YouTube" },
+      { name: "Twitch",     source: "Twitch" },
+      { name: "Plex",       source: "Plex" },
     ],
-    inputs: [],   // auto-detect from source_list when empty
+    inputs: [
+      { name: "PC",     source: "PC" },       // device-labeled HDMI 1 (auto-relabel when device on)
+      { name: "HDMI 2", source: "HDMI 2" },
+      { name: "HDMI 3", source: "HDMI 3" },
+      { name: "PS5",    source: "PS5" },      // device-labeled HDMI 4
+    ],
   },
 
   // Lights that aren't pinned to a room above. Shown under "All lights" on

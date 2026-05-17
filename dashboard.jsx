@@ -1486,11 +1486,16 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
         { entity_id: mpId });
     } catch (e) { console.warn("[aether lg-tv] power failed:", e); }
   };
-  const setVolume = (v) => {
-    if (!mpId) return;
-    callService(hass, "media_player.volume_set",
-      { entity_id: mpId, volume_level: v / 100 });
-  };
+  // LG TVs in external_arc / external_optical mode route audio to a
+  // soundbar via HDMI-CEC, so media_player.volume_set on the TV
+  // entity changes only the (silent) internal volume - the soundbar
+  // ignores it. Use webostv.button VOLUMEUP/VOLUMEDOWN instead;
+  // those are sent as CEC keys that the soundbar responds to, same
+  // as pressing the physical remote.
+  const volumeUp   = () => mpId && callService(hass, "webostv.button",
+    { entity_id: mpId, button: "VOLUMEUP" });
+  const volumeDown = () => mpId && callService(hass, "webostv.button",
+    { entity_id: mpId, button: "VOLUMEDOWN" });
   const toggleMute = () => {
     if (!mpId) return;
     callService(hass, "media_player.volume_mute",
@@ -1540,12 +1545,11 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
           <button className="atv-mute" onClick={toggleMute} title={volumeMuted ? "Unmute" : "Mute"}>
             <Icon name="volume" size={14} />
           </button>
-          <input
-            type="range" min="0" max="100" value={volumeLevel}
-            onChange={(e) => setVolume(Number(e.target.value))}
-            disabled={!mpId}
-          />
-          <span className="atv-vol-pct">{volumeMuted ? "Muted" : `${volumeLevel}%`}</span>
+          <button className="atv-vol-btn" onClick={volumeDown} title="Volume down">−</button>
+          <span className="atv-vol-pct" style={{ flex: 1, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+            {volumeMuted ? "Muted" : `Vol ${volumeLevel}%`}
+          </span>
+          <button className="atv-vol-btn" onClick={volumeUp} title="Volume up">+</button>
         </div>
 
         {inputs.length > 0 && (
@@ -1553,15 +1557,16 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
             <div className="atv-row-label">Inputs</div>
             <div className="atv-inputs-grid">
               {inputs.map((inp) => {
-                const exists = sourceList.length === 0 || sourceList.includes(inp.source);
+                // Inputs are always clickable - the TV can switch to an HDMI
+                // port even if nothing's powered on. Don't grey out based on
+                // source_list presence; LG hides off-devices from that list.
                 const active = currentSource === inp.source;
                 return (
                   <button
                     key={inp.source}
                     className={"atv-input-tile" + (active ? " active" : "")}
                     onClick={() => selectSource(inp.source)}
-                    disabled={!exists}
-                    title={exists ? `Switch to ${inp.name}` : `${inp.source} not in source list`}
+                    title={`Switch to ${inp.name}`}
                   >
                     <Icon name="tv" size={18} />
                     <span className="atv-app-name">{inp.name}</span>
