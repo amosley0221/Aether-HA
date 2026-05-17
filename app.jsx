@@ -138,49 +138,6 @@ function App() {
                    : issues.unavailable.length > 0 ? "alert"
                    : "warn";
 
-  // Network/mesh pill. Try Deco entities first (HACS integration uses
-  // various naming conventions across versions), then fall back to a
-  // generic internet binary_sensor.
-  const networkInfo = React.useMemo(() => {
-    if (!hass) return null;
-    const states = Object.values(hass.states);
-
-    // Deco: look for sensors/binary_sensors whose entity_id mentions
-    // "deco" and an online-style attribute. Count nodes that are online.
-    const decoNodes = states.filter((s) =>
-      /\bdeco\b/i.test(s.entity_id + " " + (s.attributes?.friendly_name || "")) &&
-      s.entity_id.startsWith("binary_sensor.") &&
-      /\bonline\b/i.test(s.entity_id + " " + (s.attributes?.friendly_name || "")) &&
-      s.state !== "unavailable"
-    );
-    if (decoNodes.length) {
-      const online = decoNodes.filter((s) => s.state === "on").length;
-      return { label: `Deco · ${online}/${decoNodes.length}`, ok: online === decoNodes.length };
-    }
-
-    // Deco fallback: any Deco-named sensor showing connected client count.
-    const decoClients = states.find((s) =>
-      /\bdeco\b/i.test(s.entity_id) &&
-      /client|device/i.test(s.entity_id) &&
-      !Number.isNaN(Number(s.state))
-    );
-    if (decoClients) {
-      return { label: `Deco · ${decoClients.state} clients`, ok: true };
-    }
-
-    // Generic internet check.
-    const inet = states.find((s) =>
-      s.entity_id.startsWith("binary_sensor.") &&
-      /internet|wan|online/i.test(s.entity_id) &&
-      (s.state === "on" || s.state === "off")
-    );
-    if (inet) {
-      return { label: inet.state === "on" ? "Online" : "Offline", ok: inet.state === "on" };
-    }
-
-    return null;
-  }, [hass]);
-
   return (
     <div className="app-shell">
       <header className="brandbar">
@@ -203,11 +160,6 @@ function App() {
         >
           <span className="dot" /> {statusLabel}
         </button>
-        {networkInfo && (
-          <div className={"brand-pill" + (networkInfo.ok ? "" : " brand-pill-warn")}>
-            <Icon name="wifi" size={13} /> {networkInfo.label}
-          </div>
-        )}
         <div className="brand-avatar">
           {(window.AETHER_CONFIG?.user?.name || hass?.user?.name || "?").slice(0, 1).toUpperCase()}
         </div>
