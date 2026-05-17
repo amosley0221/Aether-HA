@@ -43,7 +43,6 @@ function MusicPage() {
   const [tab, setTab]         = React.useState("Listen Now");
   const [search, setSearch]   = React.useState("");
   const [eqOpen, setEqOpen]   = React.useState(false);
-  const [queueOpen, setQueueOpen] = React.useState(false);
   const [sourceOpen, setSourceOpen] = React.useState(false);
 
   const railRef        = React.useRef(null);
@@ -458,9 +457,6 @@ function MusicPage() {
               }}
             />
           </div>
-          <button className="btn-pill" title="Up next" onClick={() => setQueueOpen(true)}>
-            <Icon name="up" /> Up Next
-          </button>
           <button className="btn-pill" title="EQ & audio features" onClick={() => setEqOpen(true)}>
             <Icon name="eq" /> EQ
           </button>
@@ -700,13 +696,6 @@ function MusicPage() {
         open={eqOpen}
         onClose={() => setEqOpen(false)}
         room={primary}
-        hass={hass}
-      />
-      <QueueDialog
-        open={queueOpen}
-        onClose={() => setQueueOpen(false)}
-        entityId={primary?.entityId}
-        hassRef={hassRef}
         hass={hass}
       />
       <SourceDialog
@@ -1365,204 +1354,6 @@ function EQDialog({ open, onClose, room, hass }) {
                 </div>
               );
             })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Up Next dialog: shows the MA queue for the primary player ───────────
-function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
-  const [items, setItems]     = React.useState([]);
-  const [loading, setLoading] = React.useState(false);
-  const [err, setErr]         = React.useState(null);
-  const scrollTop             = useModalAnchor(open);
-
-  // Live entity state for the "now playing" fallback shown when the
-  // queue WS commands all fail. MA always populates these attributes
-  // on the player entity even if the queue can't be enumerated.
-  const playerState = hass?.states?.[entityId];
-  const a = playerState?.attributes || {};
-  const nowPlaying = a.media_title ? {
-    title:  a.media_title,
-    artist: a.media_artist,
-    album:  a.media_album_name,
-    art:    a.entity_picture,
-    queuePos:   a.queue_position,
-    queueSize:  a.queue_size || a.queue_count,
-  } : null;
-
-  React.useEffect(() => {
-    if (!open || !entityId || !hassRef.current) return;
-    setLoading(true);
-    setErr(null);
-    (async () => {
-      // Strategy 1: try every MA WS command variant we know of.
-      const wsTries = [
-        { type: "music_assistant/players/queue_items",      queue_id: entityId, limit: 50 },
-        { type: "music_assistant/get_player_queue_items",   queue_id: entityId, limit: 50 },
-        { type: "music_assistant/get_player_queue_items",   player_id: entityId, limit: 50 },
-        { type: "music_assistant/queues/items",             queue_id: entityId, limit: 50 },
-        { type: "music_assistant/queue/items",              queue_id: entityId, limit: 50 },
-        { type: "music_assistant/players/queue_items",      player_id: entityId, limit: 50 },
-      ];
-      let got = null;
-      let lastErr = null;
-      for (const msg of wsTries) {
-        try {
-          console.log("[Aether queue] trying", msg.type);
-          got = await hassRef.current.callWS(msg);
-          console.log("[Aether queue] success with", msg.type);
-          break;
-        } catch (e) { lastErr = e; }
-      }
-
-      // Strategy 2: walk the player's browse_media tree looking for a
-      // "Queue" / "Now Playing" / "Up Next" folder. MA exposes queue
-      // items as a browsable node on most versions.
-      if (!got) {
-        try {
-          console.log("[Aether queue] trying browse_media tree for Queue node");
-          const root = await hassRef.current.callWS({
-            type: "media_player/browse_media",
-            entity_id: entityId,
-          });
-          const queueCandidate = (root.children || []).find((c) => {
-            const t = (c.title || "").toLowerCase();
-            return /\b(queue|up\s*next|now\s*playing)\b/.test(t);
-          });
-          if (queueCandidate?.can_expand) {
-            const queueNode = await hassRef.current.callWS({
-              type: "media_player/browse_media",
-              entity_id: entityId,
-              media_content_id:   queueCandidate.media_content_id,
-              media_content_type: queueCandidate.media_content_type,
-            });
-            if (queueNode.children?.length) {
-              console.log("[Aether queue] found via browse_media:", queueNode.children.length, "items");
-              got = queueNode.children;
-            }
-          }
-        } catch (e) {
-          console.log("[Aether queue] browse_media path failed:", e?.message);
-        }
-      }
-
-      if (got) {
-        setItems(Array.isArray(got) ? got : (got.items || got.queue_items || []));
-      } else {
-        console.log("[Aether queue] all attempts failed:", lastErr?.message);
-        setErr(lastErr?.message || "Queue unavailable");
-      }
-      setLoading(false);
-    })();
-  }, [open, entityId, hassRef]);
-
-  const jumpTo = async (index, item) => {
-    const tries = [
-      { service: "media_player.play_media", data: {
-        entity_id: entityId,
-        media_content_id: item.uri || item.media_content_id,
-        media_content_type: item.media_type || item.media_content_type,
-      } },
-      { ws: { type: "music_assistant/players/queue_index", queue_id: entityId, index } },
-    ];
-    for (const t of tries) {
-      try {
-        if (t.service) {
-          const [d, s] = t.service.split(".");
-          await hass.callService(d, s, t.data);
-        } else {
-          await hass.callWS(t.ws);
-        }
-        return;
-      } catch (_) {/* try next */}
-    }
-  };
-
-  if (!open) return null;
-
-  return (
-    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>Up Next</h3>
-          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-        <div className="modal-body">
-          {loading ? (
-            <div className="lib-status">Loading queue…</div>
-          ) : err ? (
-            // WS queue commands failed — show the now-playing info we can
-            // still read from the player entity attributes, so the modal
-            // isn't useless.
-            nowPlaying ? (
-              <div style={{ padding: "8px 0" }}>
-                <div style={{ fontSize: 11, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-                  Now playing{nowPlaying.queuePos != null && nowPlaying.queueSize
-                    ? ` · track ${nowPlaying.queuePos + 1} of ${nowPlaying.queueSize}` : ""}
-                </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <div
-                    style={{
-                      width: 64, height: 64, borderRadius: 8, flexShrink: 0,
-                      background: nowPlaying.art
-                        ? `url('${nowPlaying.art}') center/cover`
-                        : "linear-gradient(160deg, #6a6fc4, #2a2e7a)",
-                    }}
-                  />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{nowPlaying.title}</div>
-                    {nowPlaying.artist && <div style={{ fontSize: 12, color: "var(--ink-2)" }}>{nowPlaying.artist}</div>}
-                    {nowPlaying.album && <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{nowPlaying.album}</div>}
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 16, lineHeight: 1.45 }}>
-                  Full queue list isn't available — your Music Assistant version
-                  doesn't expose the queue items API that Aether knows about.
-                  Now-playing info above is live.
-                </div>
-              </div>
-            ) : (
-              <div className="lib-status" style={{ color: "var(--ink-3)" }}>
-                <div>Couldn't load queue.</div>
-                <div style={{ fontSize: 11, marginTop: 8 }}>{err}</div>
-              </div>
-            )
-          ) : items.length === 0 ? (
-            <div className="lib-status">No tracks queued.</div>
-          ) : (
-            <div className="track-list">
-              {items.map((track, i) => {
-                const title = track.name || track.title || track.media_title || "Unknown";
-                const meta  = track.artists?.map((a) => a.name).join(", ")
-                           || track.artist || track.album?.name || "";
-                const art   = track.image || track.thumbnail || track.metadata?.images?.[0]?.path;
-                return (
-                  <button
-                    key={(track.uri || track.media_content_id || title) + i}
-                    className="track-row"
-                    onClick={() => jumpTo(i, track)}
-                    title={title}
-                  >
-                    <div className="num">{i + 1}</div>
-                    <div
-                      className="thumb"
-                      style={art
-                        ? { backgroundImage: `url('${art}')`, backgroundSize: "cover", backgroundPosition: "center" }
-                        : { background: "linear-gradient(160deg, #6a6fc4, #2a2e7a)" }
-                      }
-                    />
-                    <div className="info">
-                      <div className="title">{title}</div>
-                      <div className="meta">{meta}</div>
-                    </div>
-                    <Icon name="play" size={14} />
-                  </button>
-                );
-              })}
-            </div>
           )}
         </div>
       </div>
