@@ -98,21 +98,31 @@ function App() {
     // so the status pill only flags things that are actually broken.
     const MOBILE_APP_NOISE = /(_sim_\d+|_bssid|_ssid|_connection_type|_audio_output|_geocoded_location|_storage|_last_update_trigger|_battery_state|_app_version|_ssid_\d+|_activity|_steps|_pedometer|_distance|_floors|_cellular|_phone_calling|_average_active_pace)$/;
 
-    // Skip diagnostic noise: events, persistent_notification, plus anything
-    // whose entity_category is "diagnostic" / "config".
+    // Domains we DON'T scan for "unavailable":
+    //   light       — routinely "unavailable" when powered off at the
+    //                 wall switch; indistinguishable from a real outage
+    //                 in HA, and false-positive rate is too high.
+    //   media_player — TVs/speakers go unavailable when off; expected.
+    //   sensor      — too many transient/on-demand sensors (Tesla,
+    //                 calendar lookups, etc.) report "unavailable" by
+    //                 design when not actively producing data.
+    //   binary_sensor — same noise problem at scale.
+    //
+    // We DO scan: switch, climate, lock, cover, fan, camera, vacuum,
+    // remote — these going unavailable almost always means a real
+    // integration outage worth flagging.
+    const UNAVAIL_DOMAINS = new Set([
+      "switch", "climate", "lock", "cover", "fan", "camera",
+      "vacuum", "remote",
+    ]);
+
     const unavailable = states.filter((s) => {
       if (s.state !== "unavailable") return false;
-      if (s.entity_id.startsWith("persistent_notification.")) return false;
-      if (s.entity_id.startsWith("event.")) return false;
       const cat = s.attributes?.entity_category;
       if (cat === "diagnostic" || cat === "config") return false;
-      // Mobile companion-app sensors that toggle with screen lock.
       if (MOBILE_APP_NOISE.test(s.entity_id)) return false;
-      // Only count meaningful domains the user cares about.
       const domain = s.entity_id.split(".")[0];
-      return ["light", "switch", "climate", "media_player", "lock",
-              "cover", "fan", "binary_sensor", "sensor", "camera",
-              "vacuum", "remote"].includes(domain);
+      return UNAVAIL_DOMAINS.has(domain);
     }).map((s) => ({
       entity_id: s.entity_id,
       name: s.attributes?.friendly_name || s.entity_id,
@@ -653,7 +663,12 @@ function StatusDialog({ open, onClose, issues }) {
                 .sort((a, b) => a.level - b.level)
                 .map((i) => (
                 <div key={i.entity_id} className="status-row">
-                  <span className="status-name">{i.name}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="status-name">{i.name}</div>
+                    <code className="status-entity" style={{ marginTop: 2, display: "inline-block" }}>
+                      {i.entity_id}
+                    </code>
+                  </div>
                   <span className={"status-battery" + (i.level <= 10 ? " critical" : "")}>
                     {i.level}%
                   </span>
