@@ -10,7 +10,6 @@ script as a tool whenever it needs current information.
 """
 from __future__ import annotations
 
-import importlib
 import logging
 from typing import Any
 
@@ -71,21 +70,17 @@ SERVICE_SCHEMA = vol.Schema(
 _LOGGER = logging.getLogger(__name__)
 
 
-def _import_anthropic():
-    """Synchronously import the anthropic package + its resources submodule.
-
-    Pulled into an executor so it doesn't race the official Anthropic
-    Conversation integration during HA startup — concurrent imports of
-    the same package from two integrations can deadlock on
-    `_ModuleLock('anthropic.resources')`.
-    """
-    mod = importlib.import_module("anthropic")
-    importlib.import_module("anthropic.resources")
-    return mod
-
-
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the search service from configuration.yaml settings."""
+    """Register the search service from configuration.yaml settings.
+
+    The anthropic package import is deferred until the service is first
+    invoked. Importing at startup races the official Anthropic
+    Conversation integration on `anthropic.resources`'s ModuleLock and
+    deadlocks regardless of which thread/executor does the import. By
+    waiting until someone calls the service, HA startup is finished and
+    the official integration has already populated the module cache, so
+    `import anthropic` is just a dict lookup.
+    """
     conf = config.get(DOMAIN)
     if conf is None:
         _LOGGER.error(
@@ -94,18 +89,30 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
         return False
 
-    anthropic = await hass.async_add_executor_job(_import_anthropic)
-
     api_key: str = conf[CONF_API_KEY]
     model: str = conf[CONF_MODEL]
     system_prompt: str = conf[CONF_SYSTEM_PROMPT]
     max_tokens: int = conf[CONF_MAX_TOKENS]
     default_max_uses: int = conf[CONF_DEFAULT_MAX_USES]
 
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    # Lazy-init cache populated on first service call.
+    state: dict[str, Any] = {"client": None, "anthropic": None}
+
+    def _build_client() -> tuple[Any, Any]:
+        """Run synchronously in an executor on first service call."""
+        import anthropic  # noqa: PLC0415 — deliberately lazy
+        return anthropic, anthropic.AsyncAnthropic(api_key=api_key)
 
     async def handle_search(call: ServiceCall) -> ServiceResponse:
         """Run an Anthropic message with web_search enabled."""
+        if state["client"] is None:
+            anthropic_mod, client = await hass.async_add_executor_job(_build_client)
+            state["anthropic"] = anthropic_mod
+            state["client"] = client
+
+        anthropic = state["anthropic"]
+        client = state["client"]
+
         query: str = call.data["query"]
         max_uses: int = call.data.get("max_uses", default_max_uses)
 
