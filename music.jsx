@@ -1379,29 +1379,50 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
   const [err, setErr]         = React.useState(null);
   const scrollTop             = useModalAnchor(open);
 
+  // Live entity state for the "now playing" fallback shown when the
+  // queue WS commands all fail. MA always populates these attributes
+  // on the player entity even if the queue can't be enumerated.
+  const playerState = hass?.states?.[entityId];
+  const a = playerState?.attributes || {};
+  const nowPlaying = a.media_title ? {
+    title:  a.media_title,
+    artist: a.media_artist,
+    album:  a.media_album_name,
+    art:    a.entity_picture,
+    queuePos:   a.queue_position,
+    queueSize:  a.queue_size || a.queue_count,
+  } : null;
+
   React.useEffect(() => {
     if (!open || !entityId || !hassRef.current) return;
     setLoading(true);
     setErr(null);
     (async () => {
-      // Try MA's documented WS commands, then fall back to media_player's
-      // generic browse of the queue.
+      // MA's WS command names for queue access have churned across major
+      // versions. Try every variant we know of - the first one that
+      // doesn't throw "Unknown command" wins.
       const tries = [
-        { type: "music_assistant/players/queue_items", queue_id: entityId, limit: 30 },
-        { type: "music_assistant/queues/items",         queue_id: entityId, limit: 30 },
-        { type: "music_assistant/queue/items",          queue_id: entityId, limit: 30 },
+        { type: "music_assistant/players/queue_items",      queue_id: entityId, limit: 50 },
+        { type: "music_assistant/get_player_queue_items",   queue_id: entityId, limit: 50 },
+        { type: "music_assistant/get_player_queue_items",   player_id: entityId, limit: 50 },
+        { type: "music_assistant/queues/items",             queue_id: entityId, limit: 50 },
+        { type: "music_assistant/queue/items",              queue_id: entityId, limit: 50 },
+        { type: "music_assistant/players/queue_items",      player_id: entityId, limit: 50 },
       ];
       let got = null;
       let lastErr = null;
       for (const msg of tries) {
         try {
+          console.log("[Aether queue] trying", msg.type);
           got = await hassRef.current.callWS(msg);
+          console.log("[Aether queue] success with", msg.type);
           break;
         } catch (e) { lastErr = e; }
       }
       if (got) {
         setItems(Array.isArray(got) ? got : (got.items || got.queue_items || []));
       } else {
+        console.log("[Aether queue] all WS attempts failed:", lastErr?.message);
         setErr(lastErr?.message || "Queue unavailable");
       }
       setLoading(false);
@@ -1443,10 +1464,42 @@ function QueueDialog({ open, onClose, entityId, hassRef, hass }) {
           {loading ? (
             <div className="lib-status">Loading queue…</div>
           ) : err ? (
-            <div className="lib-status" style={{ color: "var(--ink-3)" }}>
-              <div>Couldn't load queue.</div>
-              <div style={{ fontSize: 11, marginTop: 8 }}>{err}</div>
-            </div>
+            // WS queue commands failed — show the now-playing info we can
+            // still read from the player entity attributes, so the modal
+            // isn't useless.
+            nowPlaying ? (
+              <div style={{ padding: "8px 0" }}>
+                <div style={{ fontSize: 11, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                  Now playing{nowPlaying.queuePos != null && nowPlaying.queueSize
+                    ? ` · track ${nowPlaying.queuePos + 1} of ${nowPlaying.queueSize}` : ""}
+                </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <div
+                    style={{
+                      width: 64, height: 64, borderRadius: 8, flexShrink: 0,
+                      background: nowPlaying.art
+                        ? `url('${nowPlaying.art}') center/cover`
+                        : "linear-gradient(160deg, #6a6fc4, #2a2e7a)",
+                    }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{nowPlaying.title}</div>
+                    {nowPlaying.artist && <div style={{ fontSize: 12, color: "var(--ink-2)" }}>{nowPlaying.artist}</div>}
+                    {nowPlaying.album && <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{nowPlaying.album}</div>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 16, lineHeight: 1.45 }}>
+                  Full queue list isn't available — your Music Assistant version
+                  doesn't expose the queue items API that Aether knows about.
+                  Now-playing info above is live.
+                </div>
+              </div>
+            ) : (
+              <div className="lib-status" style={{ color: "var(--ink-3)" }}>
+                <div>Couldn't load queue.</div>
+                <div style={{ fontSize: 11, marginTop: 8 }}>{err}</div>
+              </div>
+            )
           ) : items.length === 0 ? (
             <div className="lib-status">No tracks queued.</div>
           ) : (
