@@ -291,6 +291,12 @@ const AETHER_CONFIG = {
   lgTV: {
     remote:       null,                                     // optional - leave null to use webostv.button
     mediaPlayer:  "media_player.lg_webos_tv_nano85una_2",   // the real LG TV (NOT the MA-wrapped sibling)
+    // Wake-on-LAN MAC address (wireless or wired). When the TV is "off"
+    // its WebOS service is unreachable, so Aether sends a magic packet
+    // before `media_player.turn_on` to bring it back online. Requires
+    // `wake_on_lan:` enabled in configuration.yaml AND the TV's "Mobile
+    // TV On" / "Wake On LAN" setting enabled. Leave null to disable.
+    wakeOnLanMac: "58:FD:B1:11:A3:D9",
     apps: [
       { name: "Netflix",    source: "Netflix" },
       { name: "YouTube TV", source: "YouTube TV" },

@@ -1482,8 +1482,26 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
   const togglePower = async () => {
     if (!mpId) return;
     try {
-      await callService(hass, off ? "media_player.turn_on" : "media_player.turn_off",
-        { entity_id: mpId });
+      if (off) {
+        // Wake-on-LAN first: when the TV is "off" it's actually in a
+        // low-power state with Wi-Fi listening for a magic packet but
+        // not accepting webOS commands. Send WoL first if a MAC is
+        // configured, then immediately try the normal turn_on - the
+        // integration will pick whichever path succeeds.
+        if (tv.wakeOnLanMac) {
+          try {
+            await callService(hass, "wake_on_lan.send_magic_packet",
+              { mac: tv.wakeOnLanMac });
+          } catch (e) {
+            console.warn("[aether lg-tv] WoL magic packet failed:", e);
+          }
+        }
+        await callService(hass, "media_player.turn_on",
+          { entity_id: mpId });
+      } else {
+        await callService(hass, "media_player.turn_off",
+          { entity_id: mpId });
+      }
     } catch (e) { console.warn("[aether lg-tv] power failed:", e); }
   };
   // LG TVs in external_arc / external_optical mode route audio to a
