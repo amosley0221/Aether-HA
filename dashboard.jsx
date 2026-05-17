@@ -1483,21 +1483,21 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
     if (!mpId) return;
     try {
       if (off) {
-        // Wake-on-LAN first: when the TV is "off" it's actually in a
-        // low-power state with Wi-Fi listening for a magic packet but
-        // not accepting webOS commands. Send WoL first if a MAC is
-        // configured, then immediately try the normal turn_on - the
-        // integration will pick whichever path succeeds.
+        // Powering ON: prefer WoL when available. When the TV is "off"
+        // its WebOS service is asleep and won't accept a turn_on command
+        // anyway - some webOSTV integration versions also strip the
+        // TURN_ON bit from supported_features so the call errors as
+        // "Entity does not support action media_player.turn_on".
+        // Magic packet is enough; skip the redundant turn_on in that
+        // case. Only fall back to media_player.turn_on if no MAC was
+        // configured.
         if (tv.wakeOnLanMac) {
-          try {
-            await callService(hass, "wake_on_lan.send_magic_packet",
-              { mac: tv.wakeOnLanMac });
-          } catch (e) {
-            console.warn("[aether lg-tv] WoL magic packet failed:", e);
-          }
+          await callService(hass, "wake_on_lan.send_magic_packet",
+            { mac: tv.wakeOnLanMac });
+        } else {
+          await callService(hass, "media_player.turn_on",
+            { entity_id: mpId });
         }
-        await callService(hass, "media_player.turn_on",
-          { entity_id: mpId });
       } else {
         await callService(hass, "media_player.turn_off",
           { entity_id: mpId });
