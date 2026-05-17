@@ -212,14 +212,16 @@ function DashboardPage() {
   const hasCar = carCfg && hass?.states?.[carCfg.entities?.lock];
   const tvCfg = cfg.appleTV;
   const hasTV = tvCfg && tvCfg.remote && hass?.states?.[tvCfg.remote];
+  const lgCfg = cfg.lgTV;
+  const hasLG = lgCfg && lgCfg.remote && hass?.states?.[lgCfg.remote];
 
   // ─── Filters ────────────────────────────────────────────────────────────
   // Counts and visibility reflect post-hidden lists. A section is only
   // rendered if not in hidden.sections AND it has at least one visible item.
   const filters = [
-    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + (hasTV ? 1 : 0) + visLights.length + vCameras.length + vClimates.length + visRooms.length },
+    { key: "All",      icon: "grid",    count: (hasCar ? 1 : 0) + (hasTV ? 1 : 0) + (hasLG ? 1 : 0) + visLights.length + vCameras.length + vClimates.length + visRooms.length },
     ...(hasCar ? [{ key: "Car", icon: "car", count: 1 }] : []),
-    ...(hasTV  ? [{ key: "TV",  icon: "tv",  count: 1 }] : []),
+    ...((hasTV || hasLG) ? [{ key: "TV", icon: "tv", count: (hasTV ? 1 : 0) + (hasLG ? 1 : 0) }] : []),
     { key: "Lights",   icon: "bulb",    count: visLights.length },
     { key: "Cameras",  icon: "camera",  count: vCameras.length },
     { key: "Climate",  icon: "thermo",  count: vClimates.length },
@@ -290,6 +292,16 @@ function DashboardPage() {
       {show("TV") && hasTV && (
         <AppleTVSection
           tv={tvCfg}
+          hass={hass}
+          editMode={editMode}
+          onHideSection={() => hideSection("TV")}
+        />
+      )}
+
+      {/* LG webOS TV */}
+      {show("TV") && hasLG && (
+        <LGTVSection
+          tv={lgCfg}
           hass={hass}
           editMode={editMode}
           onHideSection={() => hideSection("TV")}
@@ -1385,6 +1397,214 @@ function AppleTVSection({ tv, hass, editMode, onHideSection }) {
           </button>
           <button className="atv-ctrl" onClick={() => send("siri")} title="Siri">
             <Icon name="mic" size={18}/>
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── LG webOS TV remote ────────────────────────────────────────────────────
+// Same shape as the Apple TV section, but:
+//   • App and input switching go through media_player.select_source
+//     against the strings in the TV's source_list (LG mixes both apps
+//     and inputs in one list).
+//   • Volume is set on the TV's own media_player entity - the TV drives
+//     the connected soundbar via HDMI ARC or optical, independent of any
+//     Sonos in the same room.
+//   • D-pad / trackpad map to the LG keycodes (UP / DOWN / LEFT / RIGHT
+//     / ENTER / BACK / EXIT / HOME) used by the webOSTV integration's
+//     remote.send_command service.
+
+// Default input matcher: strings in source_list that look like physical
+// inputs rather than apps. Used when cfg.inputs is empty.
+const LG_INPUT_PATTERN = /^(hdmi|live\s*tv|component|composite|optical|ext|antenna|cable|av|usb|screen\s*share|miracast)/i;
+
+function LGTVSection({ tv, hass, editMode, onHideSection }) {
+  const remoteId = tv.remote;
+  const mpId     = tv.mediaPlayer;
+  const mp       = hass?.states?.[mpId];
+  const remote   = hass?.states?.[remoteId];
+
+  const sourceList    = mp?.attributes?.source_list || [];
+  const currentSource = mp?.attributes?.source;
+  const playing       = mp?.state === "playing";
+  const off           = remote?.state === "off" || mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable";
+
+  // Inputs: hardcoded list from config if present, else auto-detected
+  // from source_list by name pattern.
+  const inputs = (tv.inputs && tv.inputs.length)
+    ? tv.inputs
+    : sourceList
+        .filter((s) => LG_INPUT_PATTERN.test(s))
+        .map((s) => ({ name: s, source: s }));
+
+  const apps = tv.apps || [];
+
+  // LG d-pad mapping. The TVTrackpad component emits lowercase
+  // directional + "select" strings; LG's remote.send_command wants
+  // uppercase keycodes. Map at the boundary.
+  const LG_KEY = {
+    up: "UP", down: "DOWN", left: "LEFT", right: "RIGHT",
+    select: "ENTER",
+    back: "BACK", home: "HOME", menu: "MENU", info: "INFO",
+    play_pause: playing ? "PAUSE" : "PLAY",
+  };
+  const send = async (cmd) => {
+    if (!remoteId) return;
+    const key = LG_KEY[cmd] || cmd.toUpperCase();
+    try {
+      await callService(hass, "remote.send_command",
+        { entity_id: remoteId, command: key });
+    } catch (e) { console.warn("[aether lg-tv] send_command failed:", e); }
+  };
+
+  const selectSource = async (source) => {
+    if (!mpId) return;
+    try {
+      await callService(hass, "media_player.select_source",
+        { entity_id: mpId, source });
+    } catch (e) { console.warn("[aether lg-tv] select_source failed:", e); }
+  };
+
+  const togglePower = async () => {
+    if (!mpId) return;
+    try {
+      await callService(hass, off ? "media_player.turn_on" : "media_player.turn_off",
+        { entity_id: mpId });
+    } catch (e) { console.warn("[aether lg-tv] power failed:", e); }
+  };
+  const setVolume = (v) => {
+    if (!mpId) return;
+    callService(hass, "media_player.volume_set",
+      { entity_id: mpId, volume_level: v / 100 });
+  };
+  const toggleMute = () => {
+    if (!mpId) return;
+    callService(hass, "media_player.volume_mute",
+      { entity_id: mpId, is_volume_muted: !mp?.attributes?.is_volume_muted });
+  };
+
+  const volumeLevel = Math.round(((mp?.attributes?.volume_level) ?? 0) * 100);
+  const volumeMuted = !!mp?.attributes?.is_volume_muted;
+  const title       = mp?.attributes?.media_title || (off ? "Off" : "LG TV");
+  const subtitle    = currentSource && currentSource !== title ? currentSource : "";
+
+  return (
+    <>
+      <div className="dash-section-head">
+        <h2>LG TV · Office</h2>
+        <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span>{off ? "Off" : (playing ? "Playing" : currentSource || "On")}</span>
+          {editMode && (
+            <button className="section-hide-btn" onClick={onHideSection}>Hide section</button>
+          )}
+        </div>
+      </div>
+
+      <div className="atv-tile">
+        <div className="atv-tile-head">
+          <div className="atv-brand">
+            <span className="atv-brand-glyph" style={{ background: "#a50034" /* LG red */ }}>
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <text x="3" y="17" fontSize="13" fontWeight="700" fill="white" fontFamily="-apple-system, Helvetica, Arial">LG</text>
+              </svg>
+            </span>
+            <div className="atv-brand-text">
+              <div className="atv-title">{title}</div>
+              {subtitle && <div className="atv-subtitle">{subtitle}</div>}
+            </div>
+          </div>
+          <button
+            className={"atv-power" + (off ? " off" : "")}
+            onClick={togglePower}
+            title={off ? "Turn on" : "Turn off"}
+          >
+            <Icon name="power" size={16} />
+          </button>
+        </div>
+
+        <div className="atv-volume">
+          <button className="atv-mute" onClick={toggleMute} title={volumeMuted ? "Unmute" : "Mute"}>
+            <Icon name="volume" size={14} />
+          </button>
+          <input
+            type="range" min="0" max="100" value={volumeLevel}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            disabled={!mpId}
+          />
+          <span className="atv-vol-pct">{volumeMuted ? "Muted" : `${volumeLevel}%`}</span>
+        </div>
+
+        {inputs.length > 0 && (
+          <>
+            <div className="atv-row-label">Inputs</div>
+            <div className="atv-inputs-grid">
+              {inputs.map((inp) => {
+                const exists = sourceList.length === 0 || sourceList.includes(inp.source);
+                const active = currentSource === inp.source;
+                return (
+                  <button
+                    key={inp.source}
+                    className={"atv-input-tile" + (active ? " active" : "")}
+                    onClick={() => selectSource(inp.source)}
+                    disabled={!exists}
+                    title={exists ? `Switch to ${inp.name}` : `${inp.source} not in source list`}
+                  >
+                    <Icon name="tv" size={18} />
+                    <span className="atv-app-name">{inp.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {apps.length > 0 && (
+          <>
+            <div className="atv-row-label">Apps</div>
+            <div className="atv-apps-grid">
+              {apps.map((app) => {
+                const exists = sourceList.length === 0 || sourceList.includes(app.source);
+                const active = currentSource === app.source;
+                const icon = resolveAppIcon(app);
+                return (
+                  <button
+                    key={app.name}
+                    className={"atv-app-tile" + (active ? " active" : "")}
+                    onClick={() => selectSource(app.source)}
+                    disabled={!exists}
+                    title={exists ? `Launch ${app.name}` : `${app.source} not in source list`}
+                  >
+                    <span
+                      className="atv-app-icon"
+                      style={icon ? { background: icon.bg, border: icon.border || "0" }
+                                  : { background: "#1f2326" }}
+                    >
+                      {icon?.glyph || <span className="atv-app-initial">{(app.name || "?").slice(0,1)}</span>}
+                    </span>
+                    <span className="atv-app-name">{app.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        <TVTrackpad onCmd={send} onSelect={() => send("select")} />
+
+        <div className="atv-controls">
+          <button className="atv-ctrl" onClick={() => send("back")} title="Back">
+            <Icon name="back" size={18}/>
+          </button>
+          <button className="atv-ctrl" onClick={() => send("home")} title="Home">
+            <Icon name="home" size={18}/>
+          </button>
+          <button className="atv-ctrl" onClick={() => send("play_pause")} title="Play / Pause">
+            <Icon name={playing ? "pause" : "play"} size={18}/>
+          </button>
+          <button className="atv-ctrl" onClick={() => send("menu")} title="Settings / Menu">
+            <Icon name="settings" size={18}/>
           </button>
         </div>
       </div>

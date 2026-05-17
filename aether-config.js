@@ -268,6 +268,36 @@ const AETHER_CONFIG = {
     ],
   },
 
+  // LG webOS TV remote (Office). The HA webOSTV integration creates
+  // both a media_player and a remote entity per TV. Volume controls
+  // the TV itself (which drives the connected soundbar via its own
+  // pass-through, independent of the room's Sonos). Apps use
+  // `select_source` against the names that appear in the TV's own
+  // `source_list` attribute - same strings the LG remote shows when
+  // you press the Input button.
+  //
+  // `apps`: items the user wants pinned (regardless of order in the
+  // TV's source_list). Each `source` must match an entry from
+  // attributes.source_list exactly. Verify in Developer Tools →
+  // States → your media_player.<lg_tv> → attributes.source_list.
+  //
+  // `inputs`: leave empty to auto-detect (everything in source_list
+  // matching HDMI/Live TV/Component/etc.), or hardcode a list to
+  // override the auto-detection order.
+  lgTV: {
+    remote:       "remote.lg_webos_tv_nano85una",        // ← your LG remote entity
+    mediaPlayer:  "media_player.lg_webos_tv_nano85una",  // ← your LG media_player
+    apps: [
+      { name: "Netflix",  source: "Netflix" },
+      { name: "YouTube",  source: "YouTube" },
+      { name: "Twitch",   source: "Twitch" },
+      { name: "Plex",     source: "Plex" },
+      { name: "Disney+",  source: "Disney+" },
+      { name: "Prime Video", source: "Amazon Prime Video" },
+    ],
+    inputs: [],   // auto-detect from source_list when empty
+  },
+
   // Lights that aren't pinned to a room above. Shown under "All lights" on
   // the dashboard so nothing is hidden.
   globalLights: [
