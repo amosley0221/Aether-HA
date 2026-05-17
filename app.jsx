@@ -92,6 +92,12 @@ function App() {
       level: Math.round(Number(s.state)),
     }));
 
+    // Mobile App / iCloud / device-tracker companion sensors are
+    // routinely "unavailable" when phones/tablets sleep or lock — they
+    // come back the moment the device wakes. Skip the canonical suffixes
+    // so the status pill only flags things that are actually broken.
+    const MOBILE_APP_NOISE = /(_sim_\d+|_bssid|_ssid|_connection_type|_audio_output|_geocoded_location|_storage|_last_update_trigger|_battery_state|_app_version|_ssid_\d+|_activity|_steps|_pedometer|_distance|_floors|_cellular|_phone_calling|_average_active_pace)$/;
+
     // Skip diagnostic noise: events, persistent_notification, plus anything
     // whose entity_category is "diagnostic" / "config".
     const unavailable = states.filter((s) => {
@@ -100,6 +106,8 @@ function App() {
       if (s.entity_id.startsWith("event.")) return false;
       const cat = s.attributes?.entity_category;
       if (cat === "diagnostic" || cat === "config") return false;
+      // Mobile companion-app sensors that toggle with screen lock.
+      if (MOBILE_APP_NOISE.test(s.entity_id)) return false;
       // Only count meaningful domains the user cares about.
       const domain = s.entity_id.split(".")[0];
       return ["light", "switch", "climate", "media_player", "lock",
