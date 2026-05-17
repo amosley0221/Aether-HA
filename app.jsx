@@ -387,30 +387,56 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   }, [sttSupported, listening, voiceCfg.language, send]);
 
   // Auto-start mic when chat was opened by the wake word.
-  // Two timers: a primary attempt 400ms after open (gives the wake-word
-  // recognizer time to fully release the mic), and a retry 1.2s later in
-  // case the first start() races with the abort. Consume the flag only
-  // after we've actually scheduled an attempt, so a stale autoListen
-  // doesn't get cleared before anything tries to listen.
+  //
+  // History of bugs this guards against:
+  //   1) Effect cleanup canceling the retry timers. Solved by storing
+  //      timers in a ref that survives re-renders.
+  //   2) Stale closure on startListening — the captured callback had an
+  //      out-of-date `listening` value, causing retries to silently no-op
+  //      or double-start. Solved by routing through startListeningRef.
+  //   3) Re-arming on every state change. Solved by a "fired once" ref
+  //      that resets only when the dialog closes.
+  const autoListenFiredRef   = React.useRef(false);
+  const autoListenTimersRef  = React.useRef([]);
+  const startListeningRef    = React.useRef(startListening);
+  const listeningRef         = React.useRef(listening);
+  React.useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
+  React.useEffect(() => { listeningRef.current = listening; }, [listening]);
+
+  const cancelAutoListenTimers = () => {
+    autoListenTimersRef.current.forEach((t) => clearTimeout(t));
+    autoListenTimersRef.current = [];
+  };
   React.useEffect(() => {
-    if (!(open && autoListen && sttSupported)) return;
-    let cancelled = false;
-    const attemptListen = (label) => {
-      if (cancelled || listening) return;
+    if (!open) {
+      autoListenFiredRef.current = false;
+      cancelAutoListenTimers();
+    }
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!open || !autoListen || !sttSupported) return;
+    if (autoListenFiredRef.current) return;
+    autoListenFiredRef.current = true;
+    console.log("[Aether voice] autoListen scheduling 3 attempts");
+
+    const tryStart = (label) => {
+      if (listeningRef.current) {
+        console.log("[Aether voice] autoListen", label, "skipped (already listening)");
+        return;
+      }
       console.log("[Aether voice] autoListen attempt:", label);
-      try { startListening(); } catch (err) {
+      try { startListeningRef.current?.(); } catch (err) {
         console.log("[Aether voice] startListening threw:", err);
       }
     };
-    const t1 = setTimeout(() => attemptListen("primary"), 400);
-    const t2 = setTimeout(() => attemptListen("retry"), 1200);
+    autoListenTimersRef.current = [
+      setTimeout(() => tryStart("primary @400ms"), 400),
+      setTimeout(() => tryStart("retry @1500ms"), 1500),
+      setTimeout(() => tryStart("retry @3000ms"), 3000),
+    ];
     onAutoListenConsumed?.();
-    return () => {
-      cancelled = true;
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [open, autoListen, sttSupported, startListening, onAutoListenConsumed, listening]);
+  }, [open, autoListen, sttSupported, onAutoListenConsumed]);
 
   const clearChat = () => {
     setMessages([]);
