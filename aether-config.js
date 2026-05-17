@@ -315,7 +315,7 @@ const AETHER_CONFIG = {
       name:         "LG Swing Monitor · Office",
       remote:       null,
       mediaPlayer:  "media_player.lg_webos_u889sa_2",
-      wakeOnLanMac: null,                       // add MAC here later if WoL needed
+      wakeOnLanMac: "1C:F4:3F:12:D1:62",
       apps: [
         { name: "Netflix",    source: "Netflix" },
         { name: "YouTube TV", source: "YouTube TV" },
@@ -323,10 +323,15 @@ const AETHER_CONFIG = {
         { name: "Twitch",     source: "Twitch" },
         { name: "Plex",       source: "Plex" },
       ],
+      // Inputs use webOS app IDs (appId) instead of source strings so
+      // they work even when the connected device is off or labeled
+      // differently in source_list. If a switch doesn't take, the app
+      // ID is wrong - check `app_id` in Developer Tools while that
+      // input is active on the monitor, and update accordingly.
       inputs: [
-        { name: "USB-C",  source: "USB-C" },
-        { name: "HDMI 1", source: "HDMI 1" },
-        { name: "HDMI 2", source: "HDMI 2" },
+        { name: "USB-C",  appId: "com.webos.app.usbc" },
+        { name: "HDMI 1", appId: "com.webos.app.hdmi1" },
+        { name: "HDMI 2", appId: "com.webos.app.hdmi2" },
       ],
     },
   ],

@@ -1484,6 +1484,22 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
         { entity_id: mpId, source });
     } catch (e) { console.warn("[aether lg-tv] select_source failed:", e); }
   };
+  // Switch to a physical input by its webOS app ID instead of by source
+  // name. media_player.select_source validates against source_list,
+  // which on LG Smart Monitors only contains inputs labeled with
+  // currently-connected device names (e.g. "PC", "Xbox") - not the
+  // generic "HDMI 1" / "USB-C" strings. Launching by app ID
+  // (com.webos.app.hdmi1, etc.) bypasses that validation entirely.
+  const launchInputApp = async (appId) => {
+    if (!mpId) return;
+    try {
+      await callService(hass, "webostv.command", {
+        entity_id: mpId,
+        command: "system.launcher/launch",
+        payload: { id: appId },
+      });
+    } catch (e) { console.warn("[aether lg-tv] launch input failed:", e); }
+  };
 
   const togglePower = async () => {
     if (!mpId) return;
@@ -1580,16 +1596,31 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
           <>
             <div className="atv-row-label">Inputs</div>
             <div className="atv-inputs-grid">
-              {inputs.map((inp) => {
+              {inputs.map((inp, i) => {
                 // Inputs are always clickable - the TV can switch to an HDMI
                 // port even if nothing's powered on. Don't grey out based on
                 // source_list presence; LG hides off-devices from that list.
-                const active = currentSource === inp.source;
+                // Two click paths:
+                //   inp.appId    → webostv.command launches by webOS app ID
+                //                  (bypasses select_source's source_list
+                //                  validation; works for LG Smart Monitors
+                //                  whose source_list only carries device-
+                //                  labeled names like "PC" or "Xbox").
+                //   inp.source   → media_player.select_source with the
+                //                  string. Subject to source_list
+                //                  validation - only works when the string
+                //                  is reported by the TV.
+                const active = inp.appId
+                  ? mp?.attributes?.app_id === inp.appId
+                  : currentSource === inp.source;
+                const handleClick = () => inp.appId
+                  ? launchInputApp(inp.appId)
+                  : selectSource(inp.source);
                 return (
                   <button
-                    key={inp.source}
+                    key={inp.appId || inp.source || i}
                     className={"atv-input-tile" + (active ? " active" : "")}
-                    onClick={() => selectSource(inp.source)}
+                    onClick={handleClick}
                     title={`Switch to ${inp.name}`}
                   >
                     <Icon name="tv" size={18} />
