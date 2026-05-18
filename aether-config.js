@@ -233,6 +233,11 @@ const AETHER_CONFIG = {
         rearLeft:   "sensor.tone_tire_pressure_rear_left",
         rearRight:  "sensor.tone_tire_pressure_rear_right",
       },
+      // Tessie exposes a software-update entity (usually
+      // `update.<carname>_update`). The Tesla card shows an Install
+      // button + progress bar when this entity reports state=on or
+      // in_progress > 0. If you don't have Tessie, leave it blank.
+      update: "update.tone_update",
     },
   },
 

@@ -160,6 +160,44 @@ input { font: inherit; color: inherit; }
 .status-battery { color: #8a5a14; font-weight: 600; font-size: 13px; }
 .status-battery.critical { color: #d8462e; }
 .status-version { color: var(--ink-3); font-size: 12px; }
+
+/* Update rows with an Install button and progress bar. */
+.status-row-update {
+  display: block; padding: 10px 0;
+}
+.status-row-update-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+}
+.status-row-update .status-version {
+  display: block; margin-top: 2px;
+}
+.status-install-btn {
+  border: 0; border-radius: 999px; padding: 6px 14px;
+  background: var(--accent, #4a89dc); color: #fff;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0;
+}
+.status-install-btn:hover:not(:disabled) { filter: brightness(1.05); }
+.status-install-btn:disabled {
+  background: rgba(0,0,0,.12); color: var(--ink-3); cursor: default;
+}
+.status-progress {
+  margin-top: 8px; height: 4px; border-radius: 999px;
+  background: rgba(0,0,0,.08); overflow: hidden;
+}
+.status-progress-fill {
+  height: 100%; background: var(--accent, #4a89dc);
+  transition: width .4s ease;
+}
+.status-progress-fill.indeterminate {
+  width: 35%;
+  animation: status-progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes status-progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(385%); }
+}
 .brand-avatar {
   width: 30px; height: 30px; border-radius: 999px;
   background: linear-gradient(135deg, #d8a584, #8b5a3f);

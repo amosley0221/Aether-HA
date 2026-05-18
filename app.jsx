@@ -175,13 +175,17 @@ function App() {
 
     const updates = states.filter((s) =>
       s.entity_id.startsWith("update.") &&
-      s.state === "on" &&
+      (s.state === "on" || s.attributes?.in_progress) &&
       !isIgnored(s.entity_id)
     ).map((s) => ({
       entity_id: s.entity_id,
       name: s.attributes?.friendly_name || s.entity_id,
       installed: s.attributes?.installed_version,
       latest: s.attributes?.latest_version,
+      // Tessie & most integrations: `in_progress` is either a boolean
+      // (still installing, percentage unknown) or a number 0–100.
+      inProgress: s.attributes?.in_progress,
+      releaseUrl: s.attributes?.release_url,
     }));
 
     return { batteries, unavailable, updates };
@@ -251,6 +255,7 @@ function App() {
         open={statusOpen}
         onClose={() => setStatusOpen(false)}
         issues={issues}
+        hass={hass}
       />
       <BrowserModal
         state={browserState}
@@ -880,7 +885,32 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
 }
 
 // ─── Status dialog: lists active issues from the brandbar status pill ────
-function StatusDialog({ open, onClose, issues }) {
+function StatusDialog({ open, onClose, issues, hass }) {
+  // Track which updates the user has just clicked, so the button shows
+  // a spinner before the next HA state push arrives with `in_progress`.
+  // (Tessie can take a few seconds to acknowledge the install.)
+  const [pending, setPending] = React.useState({});
+  const installUpdate = async (entity_id) => {
+    if (!hass?.callService) return;
+    setPending((p) => ({ ...p, [entity_id]: true }));
+    try {
+      await hass.callService("update", "install", {}, { entity_id });
+    } catch (err) {
+      console.error("[aether status] update install failed:", err);
+      alert("Update install failed: " + (err?.message || err));
+    } finally {
+      // Drop the "pending" flag once the entity reports its own
+      // in_progress, or after a generous timeout in case HA never
+      // updates (Tessie sometimes silently no-ops if the car is
+      // unreachable).
+      setTimeout(() => setPending((p) => {
+        const next = { ...p };
+        delete next[entity_id];
+        return next;
+      }), 20000);
+    }
+  };
+
   if (!open) return null;
   const total = issues.batteries.length + issues.unavailable.length + issues.updates.length;
   return (
@@ -934,14 +964,42 @@ function StatusDialog({ open, onClose, issues }) {
                 <strong>Updates available</strong>
                 <span className="status-count">{issues.updates.length}</span>
               </div>
-              {issues.updates.map((i) => (
-                <div key={i.entity_id} className="status-row">
-                  <span className="status-name">{i.name}</span>
-                  <span className="status-version">
-                    {i.installed || "?"} → {i.latest || "?"}
-                  </span>
-                </div>
-              ))}
+              {issues.updates.map((i) => {
+                // `in_progress` is either a boolean (installing,
+                // percentage unknown) or a number 0–100.
+                const ip = i.inProgress;
+                const installing = ip === true || (typeof ip === "number" && ip > 0) || pending[i.entity_id];
+                const pct = typeof ip === "number" ? Math.max(0, Math.min(100, ip)) : null;
+                return (
+                  <div key={i.entity_id} className="status-row status-row-update">
+                    <div className="status-row-update-head">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="status-name">{i.name}</div>
+                        <div className="status-version">
+                          {i.installed || "?"} → {i.latest || "?"}
+                        </div>
+                      </div>
+                      <button
+                        className="status-install-btn"
+                        onClick={() => installUpdate(i.entity_id)}
+                        disabled={installing}
+                      >
+                        {installing
+                          ? (pct != null ? `Installing ${pct}%` : "Installing…")
+                          : "Install"}
+                      </button>
+                    </div>
+                    {installing && (
+                      <div className="status-progress">
+                        <div
+                          className={"status-progress-fill" + (pct == null ? " indeterminate" : "")}
+                          style={pct != null ? { width: `${pct}%` } : undefined}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
           {total === 0 && (

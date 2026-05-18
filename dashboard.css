@@ -513,6 +513,50 @@
 }
 .car-btn.on:hover { background: var(--accent); border-color: var(--accent); }
 
+/* Software update banner — appears under the action buttons when the
+   Tessie update entity reports a pending or in-progress install. */
+.car-update {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(74, 137, 220, .08);
+  border: 1px solid rgba(74, 137, 220, .18);
+}
+.car-update-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+}
+.car-update-title {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.car-update-version {
+  font-size: 11px; font-weight: 500; color: var(--ink-3);
+}
+.car-update-btn {
+  border: 0; border-radius: 999px; padding: 7px 16px;
+  background: var(--accent, #4a89dc); color: #fff;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0;
+  transition: filter .15s;
+}
+.car-update-btn:hover:not(:disabled) { filter: brightness(1.05); }
+.car-update-btn:disabled {
+  background: rgba(0,0,0,.12); color: var(--ink-3); cursor: default;
+}
+.car-update-progress {
+  margin-top: 10px; height: 5px; border-radius: 999px;
+  background: rgba(0,0,0,.08); overflow: hidden;
+}
+.car-update-progress-fill {
+  height: 100%; background: var(--accent, #4a89dc);
+  transition: width .4s ease;
+}
+.car-update-progress-fill.indeterminate {
+  width: 35%;
+  animation: status-progress-slide 1.4s ease-in-out infinite;
+}
+
 /* ─── Mid-width (foldables, tablets in portrait) ─────────────────────
    Below ~960px the car card's side-by-side layout starts to crush the
    right column (4-stat row + button group can't both fit in ~324px),

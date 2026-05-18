@@ -1005,6 +1005,31 @@ function CarSection({ car, hass, editMode, onHideSection }) {
                      : battery < 50       ? "#c97a52"
                      : "#2f8f63";
 
+  // ─── Software update (Tessie) ──────────────────────────────────────────
+  // The update entity is "on" when an update is available, "off"
+  // otherwise. `in_progress` is either a boolean or 0–100 number while
+  // installing. Show a row only when there's something to act on.
+  const updateState  = s(e.update);
+  const updateAvail  = updateState && updateState.state === "on";
+  const updateIP     = updateState?.attributes?.in_progress;
+  const updateInstalling = updateIP === true || (typeof updateIP === "number" && updateIP > 0);
+  const updatePct    = typeof updateIP === "number" ? Math.max(0, Math.min(100, updateIP)) : null;
+  const updateLatest = updateState?.attributes?.latest_version;
+  const updateInstalled = updateState?.attributes?.installed_version;
+  const [pendingInstall, setPendingInstall] = React.useState(false);
+  const showUpdate = e.update && (updateAvail || updateInstalling || pendingInstall);
+  const installUpdate = async () => {
+    setPendingInstall(true);
+    try {
+      await hass.callService("update", "install", {}, { entity_id: e.update });
+    } catch (err) {
+      console.error("[aether car] update install failed:", err);
+      alert("Update install failed: " + (err?.message || err));
+    } finally {
+      setTimeout(() => setPendingInstall(false), 20000);
+    }
+  };
+
   return (
     <>
       <div className="dash-section-head">
@@ -1122,6 +1147,36 @@ function CarSection({ car, hass, editMode, onHideSection }) {
               <Icon name="grid" size={14} /> Trunk
             </button>
           </div>
+
+          {showUpdate && (
+            <div className="car-update">
+              <div className="car-update-head">
+                <div className="car-update-title">
+                  Software update
+                  <span className="car-update-version">
+                    {updateInstalled || "?"} → {updateLatest || "?"}
+                  </span>
+                </div>
+                <button
+                  className="car-update-btn"
+                  onClick={installUpdate}
+                  disabled={updateInstalling || pendingInstall}
+                >
+                  {updateInstalling || pendingInstall
+                    ? (updatePct != null ? `Installing ${updatePct}%` : "Installing…")
+                    : "Install"}
+                </button>
+              </div>
+              {(updateInstalling || pendingInstall) && (
+                <div className="car-update-progress">
+                  <div
+                    className={"car-update-progress-fill" + (updatePct == null ? " indeterminate" : "")}
+                    style={updatePct != null ? { width: `${updatePct}%` } : undefined}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </>
