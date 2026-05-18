@@ -365,8 +365,24 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
         ? (r?.response?.data?.code || "error") : null;
       setMessages((m) => [...m, { role: "assistant", text: speech, error: !!errType }]);
       if (r?.conversation_id) setConversationId(r.conversation_id);
-      // Speak the assistant's reply aloud
-      if (speakReplies && !errType) speak(speech);
+      // Speak the assistant's reply aloud, then optionally re-open the
+      // mic for a natural conversational follow-up. Using a callback
+      // instead of an isSpeaking-based useEffect avoids a render race
+      // for very short responses (where isSpeaking can flip
+      // true→false in the same React batch and the effect misses it).
+      if (speakReplies && !errType) {
+        speak(speech, {
+          onDone: () => {
+            if (voiceCfg.autoFollowup !== false && open && !listeningRef.current) {
+              setTimeout(() => {
+                if (!listeningRef.current) {
+                  try { startListeningRef.current?.(); } catch {}
+                }
+              }, 250);
+            }
+          },
+        });
+      }
     } catch (err) {
       const msg = "Error: " + (err?.message || String(err));
       setMessages((m) => [...m, { role: "assistant", text: msg, error: true }]);
@@ -410,10 +426,16 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
     setIsSpeaking(false);
   }, [voiceCfg]);
 
-  const speak = React.useCallback(async (text) => {
-    if (!speakReplies || !text) return;
+  const speak = React.useCallback(async (text, { onDone } = {}) => {
+    if (!speakReplies || !text) {
+      onDone?.();
+      return;
+    }
     const speakable = cleanForSpeech(text);
-    if (!speakable) return;
+    if (!speakable) {
+      onDone?.();
+      return;
+    }
     console.log("[aether] speak:", speakable.slice(0, 80));
     setIsSpeaking(true);
     let completed = false;
@@ -421,6 +443,8 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
       if (completed) return;
       completed = true;
       setIsSpeaking(false);
+      console.log("[aether] speech complete");
+      onDone?.();
     };
 
     // Poll window.speechSynthesis.speaking instead of relying on the
@@ -428,42 +452,64 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
     // chunked speech segments (long text gets split internally) which
     // would yank the stop button away mid-sentence. `speaking` is
     // truthy as long as ANY utterance is in flight, so polling is
-    // reliable across all browsers.
+    // reliable across all browsers. Require it to stay falsy for
+    // ~600ms before declaring done so brief inter-chunk gaps don't
+    // trigger a false complete.
     const watchBrowserSpeechEnd = () => {
+      let idleSince = null;
       const iv = setInterval(() => {
         if (completed) { clearInterval(iv); return; }
-        if (!window.speechSynthesis?.speaking && !window.speechSynthesis?.pending) {
+        const idle = !window.speechSynthesis?.speaking && !window.speechSynthesis?.pending;
+        if (!idle) {
+          idleSince = null;
+          return;
+        }
+        if (idleSince === null) {
+          idleSince = Date.now();
+          return;
+        }
+        if (Date.now() - idleSince > 600) {
           clearInterval(iv);
           onComplete();
         }
-      }, 300);
-      // Safety: hard cap at 5 minutes
+      }, 200);
       setTimeout(() => clearInterval(iv), 5 * 60 * 1000);
     };
 
     // For HA TTS, poll the media_player entity state. tts.speak resolves
     // once the audio is queued, not when it finishes — so we watch the
     // player: it enters "playing" while speaking the message, then
-    // transitions to "idle"/"off" when done. Far more accurate than
-    // estimating from character count, especially for engines like
-    // Piper that synthesize at different speeds than Google Translate.
+    // transitions to "idle"/"off" when done. Same debounce idea as
+    // browser TTS to ride out brief "buffering" blips Cast endpoints
+    // emit between Piper-generated audio chunks.
     const watchHAPlayerEnd = async (mp) => {
       const start = Date.now();
-      // Wait up to 5s for the player to enter "playing"
+      // Wait up to 10s for the player to enter "playing"
       let entered = false;
-      while (Date.now() - start < 5000) {
-        await new Promise((r) => setTimeout(r, 200));
+      while (Date.now() - start < 10000) {
+        await new Promise((r) => setTimeout(r, 150));
         const st = hassRef.current?.states?.[mp]?.state;
         if (st === "playing") { entered = true; break; }
+        if (completed) return;
       }
       if (!entered) { onComplete(); return; }
-      // Wait until it leaves "playing", capped at 2 minutes
-      const playEnded = Date.now();
-      while (Date.now() - playEnded < 120000) {
-        await new Promise((r) => setTimeout(r, 300));
+      // Wait until the player has been NOT-playing for 1.2s straight
+      // (allow brief buffering dips during Cast playback).
+      let nonPlayingSince = null;
+      const watchStart = Date.now();
+      while (Date.now() - watchStart < 120000) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (completed) return;
         const st = hassRef.current?.states?.[mp]?.state;
-        if (st !== "playing") break;
-        if (completed) return; // user cancelled
+        if (st === "playing") {
+          nonPlayingSince = null;
+          continue;
+        }
+        if (nonPlayingSince === null) {
+          nonPlayingSince = Date.now();
+        } else if (Date.now() - nonPlayingSince > 1200) {
+          break;
+        }
       }
       onComplete();
     };
@@ -630,29 +676,6 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   //      or double-start. Solved by routing through startListeningRef.
   //   3) Re-arming on every state change. Solved by a "fired once" ref
   //      that resets only when the dialog closes.
-  // After TTS finishes speaking, optionally auto-start the mic for a few
-  // seconds so the user can reply naturally without re-tapping. Disable
-  // by setting voice.autoFollowup: false in aether-config.js. Cancels
-  // cleanly if the user opens/closes the chat in the meantime.
-  const autoFollowup = voiceCfg.autoFollowup !== false;
-  const wasSpeakingRef = React.useRef(false);
-  React.useEffect(() => {
-    if (!open || !autoFollowup) {
-      wasSpeakingRef.current = isSpeaking;
-      return;
-    }
-    if (wasSpeakingRef.current && !isSpeaking) {
-      // Speech just ended — open the mic
-      const t = setTimeout(() => {
-        if (!listeningRef.current) {
-          try { startListeningRef.current?.(); } catch {}
-        }
-      }, 200);
-      wasSpeakingRef.current = false;
-      return () => clearTimeout(t);
-    }
-    wasSpeakingRef.current = isSpeaking;
-  }, [isSpeaking, open, autoFollowup]);
 
   const autoListenFiredRef   = React.useRef(false);
   const autoListenTimersRef  = React.useRef([]);
