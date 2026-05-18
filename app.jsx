@@ -396,14 +396,19 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
 
   const cancelSpeech = React.useCallback(() => {
     try { window.speechSynthesis?.cancel(); } catch {}
-    // Also stop HA TTS if we routed through it (media_player playing audio).
+    // Only call media_stop on the HA TTS player if it's actually playing.
+    // Cast players (e.g. the Pixel Tablet) throw a 500 if you call stop
+    // while they're idle, which surfaces as a noisy red toast even when
+    // we .catch() the promise (HA renders the error from the WS layer
+    // before the promise reaches us).
     const mp = voiceCfg?.ttsMediaPlayer;
-    if (mp && hass?.callService) {
-      hass.callService("media_player", "media_stop", { entity_id: mp })
-        .catch(() => {/* ignore — player may not support stop */});
+    const playing = mp && hassRef.current?.states?.[mp]?.state === "playing";
+    if (playing && hassRef.current?.callService) {
+      hassRef.current.callService("media_player", "media_stop", { entity_id: mp })
+        .catch(() => { /* swallowed; some integrations still error */ });
     }
     setIsSpeaking(false);
-  }, [voiceCfg, hass]);
+  }, [voiceCfg]);
 
   const speak = React.useCallback(async (text) => {
     if (!speakReplies || !text) return;
