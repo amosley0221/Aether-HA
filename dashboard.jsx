@@ -129,6 +129,7 @@ function DashboardPage() {
       name: a.friendly_name || id,
       room: id === "climate.hallway" ? "Whole house" : "",
       mode: s?.state || "off",
+      modes: a.hvac_modes || [],
       current: a.current_temperature,
       target:  a.temperature,
       min: a.min_temp || 50,
@@ -182,6 +183,9 @@ function DashboardPage() {
     if (!c) return;
     const next = Math.max(c.min, Math.min(c.max, (c.target || c.current || 70) + delta));
     svc("climate.set_temperature", { entity_id: id, temperature: next });
+  };
+  const setThermoMode = (id, mode) => {
+    svc("climate.set_hvac_mode", { entity_id: id, hvac_mode: mode });
   };
   const togglePerRoom = (room) => {
     if (!room?.entity) return;
@@ -494,6 +498,26 @@ function DashboardPage() {
                     <button className="therm-btn" onClick={() => bumpThermo(c.id, -1)}>−</button>
                     <button className="therm-btn" onClick={() => bumpThermo(c.id, +1)}>+</button>
                   </div>
+                  {c.modes.length > 1 && (
+                    <div className="therm-modes">
+                      {c.modes.map((m) => {
+                        const label = m === "heat_cool" ? "Auto"
+                                    : m === "fan_only"  ? "Fan"
+                                    : m === "dry"       ? "Dry"
+                                    : m.charAt(0).toUpperCase() + m.slice(1);
+                        return (
+                          <button
+                            key={m}
+                            className={"therm-mode therm-mode-" + m.replace("_", "-") + (c.mode === m ? " active" : "")}
+                            onClick={() => setThermoMode(c.id, m)}
+                            title={`Set mode: ${label}`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}

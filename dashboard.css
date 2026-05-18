@@ -226,6 +226,35 @@
 }
 .therm-btn:hover { background: rgba(0,0,0,.12); color: var(--ink); }
 
+.therm-modes {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  justify-content: center;
+  margin-top: 4px;
+  width: 100%;
+}
+.therm-mode {
+  font-size: 11px; font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.05);
+  color: var(--ink-3);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.therm-mode:hover { background: rgba(0,0,0,.1); color: var(--ink-2); }
+.therm-mode.active {
+  border-color: currentColor;
+  background: transparent;
+}
+.therm-mode-heat.active     { color: #c75a2c; background: rgba(199,90,44,.10); }
+.therm-mode-cool.active     { color: #2a6fdb; background: rgba(42,111,219,.10); }
+.therm-mode-heat-cool.active{ color: #8b6abf; background: rgba(139,106,191,.10); }
+.therm-mode-auto.active     { color: #8b6abf; background: rgba(139,106,191,.10); }
+.therm-mode-dry.active      { color: #d09b2c; background: rgba(208,155,44,.10); }
+.therm-mode-fan-only.active { color: #4a8aa0; background: rgba(74,138,160,.10); }
+.therm-mode-off.active      { color: var(--ink-2); background: rgba(0,0,0,.10); }
+
 /* Speaker mini-card */
 .tile.speaker .now-mini-row {
   display: flex; gap: 10px; align-items: center;
