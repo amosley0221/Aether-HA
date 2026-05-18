@@ -280,6 +280,35 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   const recognitionRef = React.useRef(null);
   const scrollTop = useModalAnchor(open);
 
+  // Auto-close on inactivity. Anything that should count as "active"
+  // (typing, speaking, listening, agent thinking, scrolling, etc.)
+  // calls bumpIdleTimer() to reset the countdown.
+  const idleSeconds = window.AETHER_CONFIG?.chat?.idleTimeoutSeconds ?? 90;
+  const idleTimerRef = React.useRef(null);
+  const bumpIdleTimer = React.useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (!open || idleSeconds <= 0) return;
+    idleTimerRef.current = setTimeout(() => {
+      console.log("[aether chat] idle for", idleSeconds, "s — auto-closing");
+      onClose();
+    }, idleSeconds * 1000);
+  }, [open, onClose, idleSeconds]);
+
+  // Clear the timer when the dialog closes, otherwise it could fire onClose
+  // after the user has already moved on (and possibly re-opened) the chat.
+  React.useEffect(() => {
+    if (!open && idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+    return () => {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [open]);
+
   const voiceCfg     = window.AETHER_CONFIG?.voice || {};
   const voiceEnabled = voiceCfg.enabled !== false;
   const speakReplies = voiceEnabled && voiceCfg.speakResponses !== false;
@@ -397,6 +426,15 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   // every re-render; the ref always points at the current value.
   const hassRef = React.useRef(hass);
   React.useEffect(() => { hassRef.current = hass; }, [hass]);
+
+  // Bump the inactivity countdown whenever the user is doing something:
+  // opening the chat, typing, sending a message, the agent speaking,
+  // or the mic actively listening. Pointer events on the modal also
+  // bump (see onPointerDown below). Without this, a long-running TTS
+  // reply could finish 89s into the timer and close 1s later.
+  React.useEffect(() => {
+    bumpIdleTimer();
+  }, [open, messages.length, input, sending, isSpeaking, listening, bumpIdleTimer]);
 
   // Strip emojis, markdown asterisks, and other characters TTS engines
   // mispronounce. The agent often emits 👋, 🎉, **bold**, etc. for
@@ -731,7 +769,12 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
 
   return (
     <div className="modal-backdrop chat-backdrop" onClick={onClose} style={{ top: scrollTop }}>
-      <div className="modal chat-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal chat-modal"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={bumpIdleTimer}
+        onKeyDown={bumpIdleTimer}
+      >
         <div className="modal-head">
           <h3>
             Aether AI
