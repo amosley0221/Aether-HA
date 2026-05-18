@@ -376,6 +376,11 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
 
   // ─── Text-to-speech: try browser SpeechSynthesis, fall back to HA TTS ─
   const [isSpeaking, setIsSpeaking] = React.useState(false);
+  // Reference to the latest hass object — needed inside async watchers
+  // that poll media_player state. Closure-captured hass goes stale on
+  // every re-render; the ref always points at the current value.
+  const hassRef = React.useRef(hass);
+  React.useEffect(() => { hassRef.current = hass; }, [hass]);
 
   // Strip emojis, markdown asterisks, and other characters TTS engines
   // mispronounce. The agent often emits 👋, 🎉, **bold**, etc. for
@@ -406,7 +411,57 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
     if (!speakable) return;
     console.log("[aether] speak:", speakable.slice(0, 80));
     setIsSpeaking(true);
-    const onComplete = () => setIsSpeaking(false);
+    let completed = false;
+    const onComplete = () => {
+      if (completed) return;
+      completed = true;
+      setIsSpeaking(false);
+    };
+
+    // Poll window.speechSynthesis.speaking instead of relying on the
+    // onend event. On Android WebView, onend fires prematurely between
+    // chunked speech segments (long text gets split internally) which
+    // would yank the stop button away mid-sentence. `speaking` is
+    // truthy as long as ANY utterance is in flight, so polling is
+    // reliable across all browsers.
+    const watchBrowserSpeechEnd = () => {
+      const iv = setInterval(() => {
+        if (completed) { clearInterval(iv); return; }
+        if (!window.speechSynthesis?.speaking && !window.speechSynthesis?.pending) {
+          clearInterval(iv);
+          onComplete();
+        }
+      }, 300);
+      // Safety: hard cap at 5 minutes
+      setTimeout(() => clearInterval(iv), 5 * 60 * 1000);
+    };
+
+    // For HA TTS, poll the media_player entity state. tts.speak resolves
+    // once the audio is queued, not when it finishes — so we watch the
+    // player: it enters "playing" while speaking the message, then
+    // transitions to "idle"/"off" when done. Far more accurate than
+    // estimating from character count, especially for engines like
+    // Piper that synthesize at different speeds than Google Translate.
+    const watchHAPlayerEnd = async (mp) => {
+      const start = Date.now();
+      // Wait up to 5s for the player to enter "playing"
+      let entered = false;
+      while (Date.now() - start < 5000) {
+        await new Promise((r) => setTimeout(r, 200));
+        const st = hassRef.current?.states?.[mp]?.state;
+        if (st === "playing") { entered = true; break; }
+      }
+      if (!entered) { onComplete(); return; }
+      // Wait until it leaves "playing", capped at 2 minutes
+      const playEnded = Date.now();
+      while (Date.now() - playEnded < 120000) {
+        await new Promise((r) => setTimeout(r, 300));
+        const st = hassRef.current?.states?.[mp]?.state;
+        if (st !== "playing") break;
+        if (completed) return; // user cancelled
+      }
+      onComplete();
+    };
 
     const tryBrowserTTS = () => new Promise((resolve) => {
       if (typeof window.speechSynthesis === "undefined") {
@@ -433,9 +488,17 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
             if (enVoice) u.voice = enVoice;
           }
           let started = false;
-          u.onstart = () => { started = true; console.log("[aether] browser TTS started, voice:", u.voice?.name || "default"); resolve(true); };
-          u.onend   = () => { console.log("[aether] browser TTS finished"); onComplete(); };
-          u.onerror = (e) => { console.warn("[aether] browser TTS error:", e.error); onComplete(); if (!started) resolve(false); };
+          u.onstart = () => {
+            started = true;
+            console.log("[aether] browser TTS started, voice:", u.voice?.name || "default");
+            watchBrowserSpeechEnd();
+            resolve(true);
+          };
+          u.onerror = (e) => {
+            console.warn("[aether] browser TTS error:", e.error);
+            onComplete();
+            if (!started) resolve(false);
+          };
           window.speechSynthesis.speak(u);
           // If onstart doesn't fire within 1.2s, assume the browser silently failed
           setTimeout(() => { if (!started) resolve(false); }, 1200);
@@ -479,12 +542,10 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
           });
         }
         console.log("[aether] HA TTS sent via", svc || "tts.google_translate_say", "→", mp);
-        // HA's tts.speak resolves once the audio is queued, not after it
-        // finishes playing. Estimate the speaking duration from the text
-        // length (~14 chars/second is a comfortable speech rate) so the
-        // follow-up listen kicks in after the speaker actually stops.
-        const approxMs = Math.min(30000, Math.max(1500, speakable.length * 71));
-        setTimeout(onComplete, approxMs);
+        // Poll the media_player state to know when speech actually ends,
+        // not when tts.speak resolves (which only confirms the audio
+        // was queued).
+        watchHAPlayerEnd(mp);
         return true;
       } catch (e) {
         console.warn("[aether] HA TTS failed:", e?.message || e);
