@@ -478,7 +478,7 @@ function CalendarDayModal({ open, onClose, events, dayLabel }) {
   const scrollTop = useModalAnchor(open);
   if (!open) return null;
   return ReactDOM.createPortal(
-    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
+    <div className="modal-backdrop home-modal-fixed" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{dayLabel}</h3>
@@ -876,7 +876,7 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
   };
 
   return ReactDOM.createPortal(
-    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
+    <div className="modal-backdrop home-modal-fixed" onClick={onClose}>
       <div className="modal note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-head">
           <input
@@ -1084,9 +1084,12 @@ function SportsTile({ hass }) {
   const leagues = cfg.leagues || ["mlb", "nfl", "nba", "epl", "ucl", "mls", "ufc"];
   const favorites = cfg.favorites || {};
 
+  const tileLimit = cfg.tileLimit || 6;
+
   const [byLeague, setByLeague] = React.useState({});
   const [loaded, setLoaded] = React.useState(false);
   const [modalOpen, setModalOpen] = React.useState(false);
+  const [leagueFilter, setLeagueFilter] = React.useState("all");
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1116,38 +1119,74 @@ function SportsTile({ hass }) {
     return () => { cancelled = true; clearInterval(tick); };
   }, [leagues.join(",")]);
 
-  // Build the "tile preview" list — favorites' games, prioritized.
+  // Build the "tile preview" list.
+  //   - Only games within the next 7 days (drops ESPN's preseason
+  //     placeholders that show up at 12:00 AM months out).
+  //   - Favorites bubble to the top; other games from the enabled
+  //     leagues fill remaining slots.
+  //   - League dropdown narrows the list to a single league.
   const previewGames = React.useMemo(() => {
-    const all = [];
+    const now = Date.now();
+    const weekOut = now + 7 * 86400 * 1000;
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+
+    const favGames = [];
+    const otherGames = [];
+
     for (const lk of leagues) {
+      if (leagueFilter !== "all" && lk !== leagueFilter) continue;
       const games = byLeague[lk] || [];
       const favSet = favorites[lk];
       for (const g of games) {
-        const involved = favSet === true ||
+        const t = new Date(g.date).getTime();
+        if (Number.isNaN(t)) continue;
+        if (t > weekOut) continue;                                       // > 7 days out: skip
+        if (t < startOfToday.getTime() && g.state !== "in") continue;    // past, not live: skip
+        const isFav = favSet === true ||
           (Array.isArray(favSet) && favSet.some((abbr) =>
             g.home?.abbreviation === abbr || g.away?.abbreviation === abbr
           ));
-        if (!involved) continue;
-        all.push({ ...g, leagueKey: lk });
+        const item = { ...g, leagueKey: lk, isFavorite: isFav };
+        if (isFav) favGames.push(item); else otherGames.push(item);
       }
     }
-    // Sort: live > today not started > completed > upcoming, then by time.
-    const rank = (g) => g.state === "in" ? 0 : g.state === "pre" ? 1 : g.state === "post" ? 2 : 3;
-    all.sort((a, b) => rank(a) - rank(b) || new Date(a.date) - new Date(b.date));
-    return all.slice(0, 4);
-  }, [byLeague, leagues.join(","), JSON.stringify(favorites)]);
+    const rank = (g) => g.state === "in" ? 0 : g.state === "pre" ? 1 : 2;
+    const sortFn = (a, b) => rank(a) - rank(b) || new Date(a.date) - new Date(b.date);
+    favGames.sort(sortFn); otherGames.sort(sortFn);
+    return [...favGames, ...otherGames].slice(0, tileLimit);
+  }, [byLeague, leagues.join(","), JSON.stringify(favorites), leagueFilter, tileLimit]);
+
+  // Helpers for the league filter UI inside the panel head.
+  const stopClick = (e) => e.stopPropagation();
 
   return (
     <>
       <div className="home-panel sports-panel" onClick={() => setModalOpen(true)}>
         <div className="home-panel-head">
           <span className="home-panel-title">Sports</span>
-          <span className="home-panel-meta">Today</span>
+          <select
+            className="sports-league-filter"
+            value={leagueFilter}
+            onClick={stopClick}
+            onChange={(e) => { e.stopPropagation(); setLeagueFilter(e.target.value); }}
+          >
+            <option value="all">All leagues</option>
+            {leagues.map((lk) => (
+              <option key={lk} value={lk}>
+                {SPORTS_LEAGUES[lk]?.name || lk.toUpperCase()}
+              </option>
+            ))}
+          </select>
+          <span className="home-panel-meta" style={{ marginLeft: "auto" }}>
+            Tap for all
+          </span>
         </div>
         <div className="home-panel-body">
           {!loaded ? null : previewGames.length === 0 ? (
             <div className="home-panel-empty">
-              No games for your teams today. Tap for league scores.
+              {leagueFilter === "all"
+                ? "No games in the next 7 days for your enabled leagues."
+                : "Nothing scheduled in this league for the next 7 days."}
             </div>
           ) : previewGames.map((g, i) => (
             <SportsRow key={g.id || i} game={g} leagueName={SPORTS_LEAGUES[g.leagueKey]?.name} />
@@ -1166,7 +1205,7 @@ function SportsTile({ hass }) {
 
 function SportsRow({ game, leagueName }) {
   return (
-    <div className={"sports-row state-" + (game.state || "pre")}>
+    <div className={"sports-row state-" + (game.state || "pre") + (game.isFavorite ? " is-fav" : "")}>
       <span className="sports-row-league">{leagueName}</span>
       <span className="sports-row-teams">
         <span className="sports-team">
@@ -1182,17 +1221,30 @@ function SportsRow({ game, leagueName }) {
       <span className="sports-row-status">
         {game.state === "in"   ? (game.statusDetail || "Live")
         : game.state === "post" ? "Final"
-        : formatEventTime(game.date)}
+        : formatGameTime(game.date)}
       </span>
     </div>
   );
+}
+
+function formatGameTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const dayAfter = new Date(today); dayAfter.setDate(today.getDate() + 2);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d >= today    && d < tomorrow) return time;
+  if (d >= tomorrow && d < dayAfter) return `Tomorrow ${time}`;
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
 function SportsAllModal({ open, onClose, leagues, byLeague }) {
   const scrollTop = useModalAnchor(open);
   if (!open) return null;
   return ReactDOM.createPortal(
-    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
+    <div className="modal-backdrop home-modal-fixed" onClick={onClose}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Today's scores</h3>
@@ -1258,16 +1310,20 @@ function parseEspnScoreboard(json, leagueKey) {
 // so the article opens in the in-app browser modal.
 function NewsTile({ hass }) {
   const cfg = window.AETHER_CONFIG?.news || {};
+  // Note: Reuters killed their public RSS feeds in 2020 — defaults below
+  // are sources that still publish working RSS as of this writing.
   const feeds = cfg.feeds || [
-    { name: "BBC",     url: "http://feeds.bbci.co.uk/news/rss.xml" },
-    { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews" },
-    { name: "Verge",   url: "https://www.theverge.com/rss/index.xml" },
-    { name: "ESPN",    url: "https://www.espn.com/espn/rss/news" },
+    { name: "BBC",   url: "http://feeds.bbci.co.uk/news/rss.xml" },
+    { name: "NPR",   url: "https://feeds.npr.org/1001/rss.xml" },
+    { name: "Verge", url: "https://www.theverge.com/rss/index.xml" },
+    { name: "HN",    url: "https://hnrss.org/frontpage" },
+    { name: "ESPN",  url: "https://www.espn.com/espn/rss/news" },
   ];
-  const count = cfg.count || 6;
+  const count = cfg.count || 8;
 
   const [items, setItems] = React.useState([]);
   const [loaded, setLoaded] = React.useState(false);
+  const [sourceFilter, setSourceFilter] = React.useState("all");
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1280,7 +1336,7 @@ function NewsTile({ hass }) {
           );
           if (!r.ok) return;
           const j = await r.json();
-          for (const it of (j.items || []).slice(0, 6)) {
+          for (const it of (j.items || []).slice(0, 8)) {
             all.push({
               source: f.name,
               title: it.title || "",
@@ -1295,14 +1351,14 @@ function NewsTile({ hass }) {
       }));
       all.sort((a, b) => new Date(b.date) - new Date(a.date));
       if (!cancelled) {
-        setItems(all.slice(0, count));
+        setItems(all);
         setLoaded(true);
       }
     };
     fetchAll();
     const tick = setInterval(fetchAll, 10 * 60_000);
     return () => { cancelled = true; clearInterval(tick); };
-  }, [JSON.stringify(feeds), count]);
+  }, [JSON.stringify(feeds)]);
 
   const openArticle = (url) => {
     if (!hass || !url) return;
@@ -1311,27 +1367,58 @@ function NewsTile({ hass }) {
         kind: "url", value: url, title: "Article",
       });
     } catch (err) {
-      // Fallback: open in a new tab
       try { window.open(url, "_blank", "noopener"); } catch {}
     }
   };
+
+  // Build the source list from the items we actually received so the
+  // dropdown never lists a feed that failed to fetch.
+  const sources = React.useMemo(
+    () => Array.from(new Set(items.map((i) => i.source))),
+    [items]
+  );
+  const filtered = sourceFilter === "all"
+    ? items
+    : items.filter((i) => i.source === sourceFilter);
+  const visible = filtered.slice(0, count);
 
   return (
     <div className="home-panel news-panel">
       <div className="home-panel-head">
         <span className="home-panel-title">News</span>
-        <span className="home-panel-meta">{items.length}</span>
+        <select
+          className="news-source-filter"
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+        >
+          <option value="all">All sources</option>
+          {sources.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <span className="home-panel-meta" style={{ marginLeft: "auto" }}>
+          {visible.length}
+        </span>
       </div>
       <div className="home-panel-body">
-        {!loaded ? null : items.length === 0 ? (
-          <div className="home-panel-empty">No headlines right now.</div>
-        ) : items.map((it, i) => (
+        {!loaded ? null : visible.length === 0 ? (
+          <div className="home-panel-empty">
+            {sourceFilter === "all"
+              ? "No headlines right now."
+              : `Nothing from ${sourceFilter} right now.`}
+          </div>
+        ) : visible.map((it, i) => (
           <button
             key={i}
             className="news-row"
             onClick={() => openArticle(it.link)}
           >
-            <span className="news-source">{it.source}</span>
+            <span className="news-row-meta">
+              <span className="news-source">{it.source}</span>
+              <span className="news-time">
+                {it.date ? relativeTime(new Date(it.date).getTime()) : ""}
+              </span>
+            </span>
             <span className="news-title">{decodeHtmlEntities(it.title)}</span>
           </button>
         ))}

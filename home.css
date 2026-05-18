@@ -674,6 +674,16 @@
   height: 100%;
 }
 
+/* Home-page modals (note editor, calendar day, sports modal) are
+   portaled into the panel root and pinned to the viewport with fixed
+   positioning, so they always land in front of the user regardless of
+   how far the page is scrolled. */
+.modal-backdrop.home-modal-fixed {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: auto; height: auto;
+}
+
 /* ─── Sports tile ─── */
 .sports-panel { cursor: pointer; transition: transform .15s; }
 .sports-panel:hover { transform: translateY(-2px); }
@@ -723,10 +733,32 @@
   border-bottom: 1px solid var(--hairline-2);
   padding-bottom: 4px; margin-bottom: 4px;
 }
+.sports-row.is-fav {
+  background: linear-gradient(90deg, rgba(74,137,220,.06), transparent 60%);
+  border-radius: 6px;
+}
+.sports-league-filter,
+.news-source-filter {
+  border: 1px solid var(--hairline);
+  background: var(--paper-2, #f7f5f0);
+  color: var(--ink);
+  font-size: 11px; font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3e%3cpath d='M1 3 L5 7 L9 3' stroke='%238a93a3' stroke-width='1.5' fill='none' stroke-linecap='round'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+.sports-league-filter:hover,
+.news-source-filter:hover { background-color: white; }
 
 /* ─── News tile ─── */
 .news-row {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   padding: 8px 4px;
   border: 0; background: transparent;
   border-bottom: 1px solid var(--hairline-2);
@@ -737,9 +769,18 @@
 }
 .news-row:last-child { border-bottom: 0; }
 .news-row:hover { background: rgba(0,0,0,.03); }
+.news-row-meta {
+  display: flex; align-items: baseline; gap: 8px;
+  width: 100%;
+}
 .news-source {
   font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
   color: var(--accent, #4a89dc); font-weight: 600;
+}
+.news-time {
+  font-size: 10px; color: var(--ink-3);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 .news-title {
   font-size: 13px; color: var(--ink);

@@ -413,21 +413,28 @@ const AETHER_CONFIG = {
       cbb:  ["DUKE"],
       ufc:  true,                                     // any UFC event today
     },
+    // Max games shown in the tile preview. The dropdown can narrow
+    // results to a single league; the "Tap for all" modal always shows
+    // everything in scope.
+    tileLimit: 6,
   },
 
   // ─── News tile (home page) ────────────────────────────────────────
   // Fetched through api.rss2json.com (free, no API key) so the browser
-  // can parse RSS without CORS pain. `count` is the total headlines
-  // shown on the tile, blended across all feeds and sorted by recency.
+  // can parse RSS without CORS pain. Reuters killed their public RSS
+  // feeds in 2020, so the default set uses BBC / NPR / Verge / Hacker
+  // News / ESPN — swap or add feeds freely. `count` is the max number
+  // of headlines shown after the source-filter dropdown is applied.
   news: {
     enabled: true,
     feeds: [
-      { name: "BBC",     url: "http://feeds.bbci.co.uk/news/rss.xml" },
-      { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews" },
-      { name: "Verge",   url: "https://www.theverge.com/rss/index.xml" },
-      { name: "ESPN",    url: "https://www.espn.com/espn/rss/news" },
+      { name: "BBC",   url: "http://feeds.bbci.co.uk/news/rss.xml" },
+      { name: "NPR",   url: "https://feeds.npr.org/1001/rss.xml" },
+      { name: "Verge", url: "https://www.theverge.com/rss/index.xml" },
+      { name: "HN",    url: "https://hnrss.org/frontpage" },
+      { name: "ESPN",  url: "https://www.espn.com/espn/rss/news" },
     ],
-    count: 6,
+    count: 8,
   },
 };
 
