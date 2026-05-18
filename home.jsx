@@ -468,7 +468,7 @@ function CalendarTile({ hass }) {
 function CalendarDayModal({ open, onClose, events, dayLabel }) {
   const scrollTop = useModalAnchor(open);
   if (!open) return null;
-  return (
+  return ReactDOM.createPortal(
     <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
@@ -495,7 +495,8 @@ function CalendarDayModal({ open, onClose, events, dayLabel }) {
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.querySelector("aether-panel") || document.body
   );
 }
 
@@ -865,7 +866,7 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
     onChange({ body: bodyRef.current.innerHTML });
   };
 
-  return (
+  return ReactDOM.createPortal(
     <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
       <div className="modal note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-head">
@@ -921,7 +922,8 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.querySelector("aether-panel") || document.body
   );
 }
 
