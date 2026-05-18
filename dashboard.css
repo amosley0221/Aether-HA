@@ -410,6 +410,16 @@
 .car-badge.warn   { background: #fdf2dd; color: #a47214; border-color: rgba(164,114,20,.25); }
 .car-badge.ok     { background: #e7f5ee; color: #2f8f63; border-color: rgba(47,143,99,.25); }
 .car-badge.accent { background: rgba(42,111,219,.12); color: var(--accent); border-color: rgba(42,111,219,.3); }
+.car-badge.updating {
+  background: rgba(74,137,220,.12);
+  color: var(--accent, #4a89dc);
+  border-color: rgba(74,137,220,.35);
+  animation: car-badge-updating-pulse 1.8s ease-in-out infinite;
+}
+@keyframes car-badge-updating-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .55; }
+}
 
 /* Open-doors alert block — appears only when something's actually open */
 .car-open-status {

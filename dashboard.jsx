@@ -1100,6 +1100,11 @@ function CarSection({ car, hass, editMode, onHideSection }) {
               <div className="car-sub">{car.year} {car.model} · {car.color}{car.wheels ? ` · ${car.wheels}` : ""}</div>
             </div>
             <div className="car-status-badges">
+              {(updateInstalling || isPending) && (
+                <span className="car-badge updating">
+                  ↓ {updatePct != null ? `Updating ${Math.round(updatePct)}%` : "Updating"}
+                </span>
+              )}
               {!isLocked       && <span className="car-badge warn">Unlocked</span>}
               {sentryOn        && <span className="car-badge accent">Sentry</span>}
               {charging        && <span className="car-badge ok">⚡ Charging</span>}
