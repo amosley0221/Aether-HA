@@ -786,7 +786,11 @@ function buildBrowserUrl(kind, value) {
     return `https://player.twitch.tv/?channel=${encodeURIComponent(ch)}&parent=${window.location.hostname}&autoplay=true`;
   }
   if (kind === "search") {
-    return `https://duckduckgo.com/?q=${encodeURIComponent(v)}&kp=-2&kl=us-en`;
+    // DuckDuckGo's main site (duckduckgo.com) now sets X-Frame-Options:
+    // SAMEORIGIN which blocks iframe embedding. Their HTML-only lite
+    // endpoint (html.duckduckgo.com/html) doesn't set that header so
+    // it still works as an embedded search results page.
+    return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(v)}`;
   }
   // kind === "url" (or anything else) — pass through
   if (!/^https?:\/\//.test(v)) return `https://${v}`;
