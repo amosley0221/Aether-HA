@@ -1468,10 +1468,11 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
   // is actively displaying content (firmware quirk, especially after
   // WoL wake). Treat the TV as "on" if the entity reports a current
   // source OR app_id - if SOMETHING is playing, the TV must be on.
-  const stateOff      = mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable" ||
+  const stateOff      = mp?.state === "off" || mp?.state === "standby" ||
                         (remote && remote.state === "off");
+  const unavailable   = mp?.state === "unavailable";
   const hasActive     = !!currentSource || !!currentAppId;
-  const off           = stateOff && !hasActive;
+  const off           = (stateOff || unavailable) && !hasActive;
 
   // Inputs: hardcoded list from config if present, else auto-detected
   // from source_list by name pattern.
@@ -1575,7 +1576,9 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
 
   const volumeLevel = Math.round(((mp?.attributes?.volume_level) ?? 0) * 100);
   const volumeMuted = !!mp?.attributes?.is_volume_muted;
-  const title       = mp?.attributes?.media_title || (off ? "Off" : "LG TV");
+  const title       = mp?.attributes?.media_title ||
+                      (unavailable && !hasActive ? "Unreachable" :
+                       off ? "Off" : "LG TV");
   const subtitle    = currentSource && currentSource !== title ? currentSource : "";
 
   return (
@@ -1583,7 +1586,12 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
       <div className="dash-section-head">
         <h2>{tv.name || "LG TV"}</h2>
         <div className="meta" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span>{off ? "Off" : (playing ? "Playing" : currentSource || "On")}</span>
+          <span>
+            {unavailable && !hasActive ? "Unreachable"
+             : off ? "Off"
+             : playing ? "Playing"
+             : currentSource || "On"}
+          </span>
           {editMode && (
             <button className="section-hide-btn" onClick={onHideSection}>Hide section</button>
           )}
