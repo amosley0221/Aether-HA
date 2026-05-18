@@ -496,3 +496,58 @@ input { font: inherit; color: inherit; }
   .nav-tab { padding: 6px 11px; font-size: 12px; }
   .nav-tab svg { width: 12px; height: 12px; }
 }
+
+/* ─── Built-in browser modal (YouTube / Twitch / search embeds) ─── */
+.browser-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(8, 12, 20, .55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+  padding: 24px;
+}
+.browser-modal {
+  background: #1c1c1e;
+  border-radius: 18px;
+  width: 100%;
+  max-width: 1100px;
+  height: min(82vh, 720px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,.45);
+}
+.browser-modal-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  background: #2a2a2c;
+  color: #f5f5f7;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.browser-modal-head h3 {
+  flex: 1; min-width: 0;
+  margin: 0; font-size: 14px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.browser-modal-actions { display: flex; align-items: center; gap: 8px; }
+.browser-modal-open {
+  font-size: 12px; color: rgba(255,255,255,.7);
+  text-decoration: none;
+  padding: 5px 10px; border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  transition: background .12s, color .12s;
+}
+.browser-modal-open:hover { background: rgba(255,255,255,.18); color: #fff; }
+.browser-modal .modal-close {
+  background: rgba(255,255,255,.08); color: #f5f5f7;
+  border: 0;
+}
+.browser-modal .modal-close:hover { background: rgba(255,255,255,.2); color: #fff; }
+.browser-modal-frame {
+  flex: 1; width: 100%; border: 0; background: #000;
+}
+
+@media (max-width: 720px) {
+  .browser-modal-backdrop { padding: 0; }
+  .browser-modal { border-radius: 0; height: 100vh; max-width: none; }
+}

@@ -79,6 +79,37 @@ function App() {
   // generic internet binary_sensor if Deco isn't found.
   const [statusOpen, setStatusOpen] = React.useState(false);
 
+  // Built-in browser modal — opens YouTube/Twitch embeds, DuckDuckGo
+  // searches, or arbitrary URLs when the AI agent (or any script)
+  // fires an `aether_browser_open` event.
+  //
+  // Event payload: { kind, value, title? }
+  //   kind: "youtube" | "twitch" | "search" | "url"
+  //   value: the video ID/URL, channel name, search query, or raw URL
+  const [browserState, setBrowserState] = React.useState(null);
+  React.useEffect(() => {
+    if (!hass?.connection?.subscribeEvents) return;
+    let unsub = null;
+    let cancelled = false;
+    hass.connection.subscribeEvents((event) => {
+      if (cancelled) return;
+      const d = event?.data || {};
+      const built = buildBrowserUrl(d.kind, d.value);
+      if (!built) {
+        console.warn("[aether browser] bad payload, ignoring:", d);
+        return;
+      }
+      setBrowserState({ url: built, title: d.title || defaultBrowserTitle(d.kind, d.value) });
+    }, "aether_browser_open").then((u) => {
+      if (cancelled) u();
+      else unsub = u;
+    }).catch((e) => console.warn("[aether browser] subscribe failed:", e));
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, [hass]);
+
   const issues = React.useMemo(() => {
     if (!hass) return { batteries: [], unavailable: [], updates: [] };
     const states = Object.values(hass.states);
@@ -220,6 +251,10 @@ function App() {
         open={statusOpen}
         onClose={() => setStatusOpen(false)}
         issues={issues}
+      />
+      <BrowserModal
+        state={browserState}
+        onClose={() => setBrowserState(null)}
       />
     </div>
   );
@@ -714,6 +749,84 @@ function StatusDialog({ open, onClose, issues }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Built-in browser modal ──────────────────────────────────────────────
+// Embeds YouTube/Twitch players, DuckDuckGo searches, or arbitrary URLs
+// when an `aether_browser_open` event fires. Most streaming services
+// (Netflix, Disney+, Hulu, Prime, etc.) explicitly block iframe embedding
+// via X-Frame-Options - those have to launch on a TV instead. YouTube,
+// Twitch, and DuckDuckGo all allow embedding. Twitch's embed URL requires
+// a `parent=<hostname>` parameter that matches where the iframe is loaded,
+// which we fill in from window.location.hostname at runtime.
+function buildBrowserUrl(kind, value) {
+  if (!value) return null;
+  const v = String(value).trim();
+  if (!v) return null;
+  if (kind === "youtube") {
+    // Accept either a raw video ID or a youtube URL/share link
+    let id = v;
+    if (/^https?:\/\//.test(v)) {
+      try {
+        const u = new URL(v);
+        id = u.searchParams.get("v")
+          || (u.hostname === "youtu.be" ? u.pathname.replace(/^\/+/, "") : "")
+          || u.pathname.split("/").pop();
+      } catch { id = v; }
+    }
+    if (!id) return null;
+    return `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0`;
+  }
+  if (kind === "twitch") {
+    const ch = v.replace(/^https?:\/\/(www\.)?twitch\.tv\//i, "").split(/[/?#]/)[0];
+    if (!ch) return null;
+    return `https://player.twitch.tv/?channel=${encodeURIComponent(ch)}&parent=${window.location.hostname}&autoplay=true`;
+  }
+  if (kind === "search") {
+    return `https://duckduckgo.com/?q=${encodeURIComponent(v)}&kp=-2&kl=us-en`;
+  }
+  // kind === "url" (or anything else) — pass through
+  if (!/^https?:\/\//.test(v)) return `https://${v}`;
+  return v;
+}
+
+function defaultBrowserTitle(kind, value) {
+  if (kind === "youtube") return "YouTube";
+  if (kind === "twitch")  return `Twitch · ${value}`;
+  if (kind === "search")  return `Search · ${value}`;
+  try { return new URL(value).hostname; } catch { return "Browser"; }
+}
+
+function BrowserModal({ state, onClose }) {
+  if (!state || !state.url) return null;
+  return (
+    <div className="modal-backdrop browser-modal-backdrop" onClick={onClose}>
+      <div className="browser-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="browser-modal-head">
+          <h3>{state.title}</h3>
+          <div className="browser-modal-actions">
+            <a
+              className="browser-modal-open"
+              href={state.url}
+              target="_blank"
+              rel="noreferrer"
+              title="Open in a new browser tab"
+            >
+              Open externally ↗
+            </a>
+            <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
+        </div>
+        <iframe
+          src={state.url}
+          className="browser-modal-frame"
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write"
+          referrerPolicy="no-referrer-when-downgrade"
+          title={state.title}
+        />
       </div>
     </div>
   );
