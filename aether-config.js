@@ -389,6 +389,46 @@ const AETHER_CONFIG = {
   // we call this with target = host player, source = dragged player.
   groupService: "media_player.join",   // → mass grouping uses HA's media_player.join
   ungroupService: "media_player.unjoin",
+
+  // ─── Sports tile (home page) ──────────────────────────────────────
+  // Pulls today's scoreboards from ESPN's public API. `leagues` is the
+  // order shown in the "All scores" modal; `favorites` filters what
+  // appears on the home tile itself. Favorite values are ESPN team
+  // abbreviations — peek at espn.com to find the exact strings
+  // (Phillies = PHI, Eagles = PHI, Chelsea = CHE, etc.). Set a league
+  // to `true` to bubble up *every* event in that league (handy for UFC,
+  // boxing-style one-off events where there's no team to follow).
+  sports: {
+    enabled: true,
+    leagues: ["mlb", "nfl", "nba", "epl", "ucl", "mls", "ufc", "cfb", "cbb", "nhl"],
+    favorites: {
+      mlb:  ["PHI"],                                  // Phillies
+      nfl:  ["PHI"],                                  // Eagles
+      nba:  ["PHI"],                                  // 76ers
+      nhl:  [],
+      mls:  ["CLT"],                                  // Charlotte FC
+      epl:  ["CHE"],                                  // Chelsea
+      ucl:  ["CHE"],
+      cfb:  ["MIA", "ECU", "FLA", "FSU", "USF", "UCF", "FAU", "FIU"],
+      cbb:  ["DUKE"],
+      ufc:  true,                                     // any UFC event today
+    },
+  },
+
+  // ─── News tile (home page) ────────────────────────────────────────
+  // Fetched through api.rss2json.com (free, no API key) so the browser
+  // can parse RSS without CORS pain. `count` is the total headlines
+  // shown on the tile, blended across all feeds and sorted by recency.
+  news: {
+    enabled: true,
+    feeds: [
+      { name: "BBC",     url: "http://feeds.bbci.co.uk/news/rss.xml" },
+      { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews" },
+      { name: "Verge",   url: "https://www.theverge.com/rss/index.xml" },
+      { name: "ESPN",    url: "https://www.espn.com/espn/rss/news" },
+    ],
+    count: 6,
+  },
 };
 
 window.AETHER_CONFIG = AETHER_CONFIG;

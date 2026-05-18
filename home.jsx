@@ -11,12 +11,15 @@
    any calendar.* entity HA exposes. */
 
 const HOME_TILE_DEFS = [
-  { id: "now-playing", label: "Now playing",    wide: true  },
-  { id: "house-rooms", label: "The house",      wide: false },
-  { id: "calendar",    label: "Calendar",       wide: false },
-  { id: "upcoming",    label: "Next 3 days",    wide: false },
-  { id: "todo",        label: "To-Do",          wide: false },
-  { id: "notes",       label: "Notes",          wide: true  },
+  { id: "now-playing",   label: "Now playing",    wide: true  },
+  { id: "house-rooms",   label: "The house",      wide: false },
+  { id: "calendar",      label: "Calendar",       wide: false },
+  { id: "upcoming",      label: "Next 3 days",    wide: false },
+  { id: "todo",          label: "To-Do",          wide: false },
+  { id: "sports",        label: "Sports",         wide: false },
+  { id: "news",          label: "News",           wide: false },
+  { id: "pinned-music",  label: "Pinned music",   wide: true  },
+  { id: "notes",         label: "Notes",          wide: true  },
 ];
 
 function HomePage({ navigate, editMode, onExitEdit }) {
@@ -171,6 +174,12 @@ function HomePage({ navigate, editMode, onExitEdit }) {
         return <UpcomingTile {...shared} />;
       case "todo":
         return <TodoTile {...shared} />;
+      case "sports":
+        return <SportsTile {...shared} />;
+      case "news":
+        return <NewsTile {...shared} />;
+      case "pinned-music":
+        return <PinnedMusicTile {...shared} playingRooms={playingRooms} liveRooms={liveRooms} />;
       case "notes":
         return <NotesTile {...shared} />;
       default:
@@ -1047,6 +1056,381 @@ function NoteCanvas({ initial, onChange }) {
             />
           ))}
         </svg>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tile: Sports ────────────────────────────────────────────────────────
+// Reads ESPN's public scoreboard API for each enabled league, filters for
+// the user's favorite teams, and surfaces live → today → next-up. Tapping
+// the tile opens a modal showing today's games across every enabled
+// league (not just favorites). No API key needed.
+const SPORTS_LEAGUES = {
+  mlb: { sport: "baseball",   path: "mlb",                      name: "MLB" },
+  nfl: { sport: "football",   path: "nfl",                      name: "NFL" },
+  nba: { sport: "basketball", path: "nba",                      name: "NBA" },
+  nhl: { sport: "hockey",     path: "nhl",                      name: "NHL" },
+  mls: { sport: "soccer",     path: "usa.1",                    name: "MLS" },
+  epl: { sport: "soccer",     path: "eng.1",                    name: "Premier League" },
+  ucl: { sport: "soccer",     path: "uefa.champions",           name: "Champions League" },
+  cfb: { sport: "football",   path: "college-football",         name: "College FB" },
+  cbb: { sport: "basketball", path: "mens-college-basketball",  name: "College BB" },
+  ufc: { sport: "mma",        path: "ufc",                      name: "UFC" },
+};
+
+function SportsTile({ hass }) {
+  const cfg = window.AETHER_CONFIG?.sports || {};
+  const leagues = cfg.leagues || ["mlb", "nfl", "nba", "epl", "ucl", "mls", "ufc"];
+  const favorites = cfg.favorites || {};
+
+  const [byLeague, setByLeague] = React.useState({});
+  const [loaded, setLoaded] = React.useState(false);
+  const [modalOpen, setModalOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const fetchAll = async () => {
+      const out = {};
+      await Promise.all(leagues.map(async (key) => {
+        const def = SPORTS_LEAGUES[key];
+        if (!def) return;
+        const url = `https://site.api.espn.com/apis/site/v2/sports/${def.sport}/${def.path}/scoreboard`;
+        try {
+          const r = await fetch(url);
+          if (!r.ok) return;
+          const j = await r.json();
+          out[key] = parseEspnScoreboard(j, key);
+        } catch (err) {
+          console.warn("[aether sports] fetch failed:", key, err);
+        }
+      }));
+      if (!cancelled) {
+        setByLeague(out);
+        setLoaded(true);
+      }
+    };
+    fetchAll();
+    // Refresh every 90s so live scores keep moving without hammering.
+    const tick = setInterval(fetchAll, 90_000);
+    return () => { cancelled = true; clearInterval(tick); };
+  }, [leagues.join(",")]);
+
+  // Build the "tile preview" list — favorites' games, prioritized.
+  const previewGames = React.useMemo(() => {
+    const all = [];
+    for (const lk of leagues) {
+      const games = byLeague[lk] || [];
+      const favSet = favorites[lk];
+      for (const g of games) {
+        const involved = favSet === true ||
+          (Array.isArray(favSet) && favSet.some((abbr) =>
+            g.home?.abbreviation === abbr || g.away?.abbreviation === abbr
+          ));
+        if (!involved) continue;
+        all.push({ ...g, leagueKey: lk });
+      }
+    }
+    // Sort: live > today not started > completed > upcoming, then by time.
+    const rank = (g) => g.state === "in" ? 0 : g.state === "pre" ? 1 : g.state === "post" ? 2 : 3;
+    all.sort((a, b) => rank(a) - rank(b) || new Date(a.date) - new Date(b.date));
+    return all.slice(0, 4);
+  }, [byLeague, leagues.join(","), JSON.stringify(favorites)]);
+
+  return (
+    <>
+      <div className="home-panel sports-panel" onClick={() => setModalOpen(true)}>
+        <div className="home-panel-head">
+          <span className="home-panel-title">Sports</span>
+          <span className="home-panel-meta">Today</span>
+        </div>
+        <div className="home-panel-body">
+          {!loaded ? null : previewGames.length === 0 ? (
+            <div className="home-panel-empty">
+              No games for your teams today. Tap for league scores.
+            </div>
+          ) : previewGames.map((g, i) => (
+            <SportsRow key={g.id || i} game={g} leagueName={SPORTS_LEAGUES[g.leagueKey]?.name} />
+          ))}
+        </div>
+      </div>
+      <SportsAllModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        leagues={leagues}
+        byLeague={byLeague}
+      />
+    </>
+  );
+}
+
+function SportsRow({ game, leagueName }) {
+  return (
+    <div className={"sports-row state-" + (game.state || "pre")}>
+      <span className="sports-row-league">{leagueName}</span>
+      <span className="sports-row-teams">
+        <span className="sports-team">
+          {game.away?.abbreviation || "—"}
+          {game.state !== "pre" && <b className="sports-score">{game.away?.score ?? ""}</b>}
+        </span>
+        <span className="sports-at">@</span>
+        <span className="sports-team">
+          {game.home?.abbreviation || "—"}
+          {game.state !== "pre" && <b className="sports-score">{game.home?.score ?? ""}</b>}
+        </span>
+      </span>
+      <span className="sports-row-status">
+        {game.state === "in"   ? (game.statusDetail || "Live")
+        : game.state === "post" ? "Final"
+        : formatEventTime(game.date)}
+      </span>
+    </div>
+  );
+}
+
+function SportsAllModal({ open, onClose, leagues, byLeague }) {
+  const scrollTop = useModalAnchor(open);
+  if (!open) return null;
+  return ReactDOM.createPortal(
+    <div className="modal-backdrop" onClick={onClose} style={{ top: scrollTop }}>
+      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Today's scores</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body" style={{ maxHeight: "72vh", overflowY: "auto" }}>
+          {leagues.map((lk) => {
+            const games = byLeague[lk] || [];
+            if (games.length === 0) return null;
+            return (
+              <div key={lk} className="sports-modal-league">
+                <div className="sports-modal-league-head">
+                  {SPORTS_LEAGUES[lk]?.name || lk.toUpperCase()}
+                </div>
+                {games.map((g) => (
+                  <SportsRow key={g.id} game={g} leagueName="" />
+                ))}
+              </div>
+            );
+          })}
+          {Object.values(byLeague).every((g) => (g || []).length === 0) && (
+            <div style={{ color: "var(--ink-3)", padding: "12px 0" }}>
+              No games scheduled today across the enabled leagues.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.querySelector("aether-panel") || document.body
+  );
+}
+
+function parseEspnScoreboard(json, leagueKey) {
+  const events = json?.events || [];
+  return events.map((ev) => {
+    const comp = ev.competitions?.[0] || {};
+    const competitors = comp.competitors || [];
+    const home = competitors.find((c) => c.homeAway === "home") || competitors[0];
+    const away = competitors.find((c) => c.homeAway === "away") || competitors[1];
+    const status = ev.status?.type || {};
+    const teamShape = (c) => c ? {
+      abbreviation: c.team?.abbreviation || c.team?.shortDisplayName || "",
+      name:         c.team?.displayName  || c.team?.name || "",
+      score:        c.score || "0",
+      logo:         c.team?.logo || "",
+    } : null;
+    return {
+      id: ev.id,
+      leagueKey,
+      date: ev.date,
+      state: status.state,            // "pre" | "in" | "post"
+      statusDetail: ev.status?.shortDetail || status.shortDetail || status.description,
+      home: teamShape(home),
+      away: teamShape(away),
+    };
+  });
+}
+
+// ─── Tile: News ──────────────────────────────────────────────────────────
+// Pulls a configurable list of RSS feeds through api.rss2json.com (free,
+// keyless, CORS-friendly) and shows the freshest headlines across all
+// feeds. Tapping a headline fires the existing `aether_browser_open` event
+// so the article opens in the in-app browser modal.
+function NewsTile({ hass }) {
+  const cfg = window.AETHER_CONFIG?.news || {};
+  const feeds = cfg.feeds || [
+    { name: "BBC",     url: "http://feeds.bbci.co.uk/news/rss.xml" },
+    { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews" },
+    { name: "Verge",   url: "https://www.theverge.com/rss/index.xml" },
+    { name: "ESPN",    url: "https://www.espn.com/espn/rss/news" },
+  ];
+  const count = cfg.count || 6;
+
+  const [items, setItems] = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const fetchAll = async () => {
+      const all = [];
+      await Promise.all(feeds.map(async (f) => {
+        try {
+          const r = await fetch(
+            `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(f.url)}`
+          );
+          if (!r.ok) return;
+          const j = await r.json();
+          for (const it of (j.items || []).slice(0, 6)) {
+            all.push({
+              source: f.name,
+              title: it.title || "",
+              link:  it.link  || "",
+              date:  it.pubDate || "",
+              image: it.thumbnail || it.enclosure?.link || "",
+            });
+          }
+        } catch (err) {
+          console.warn("[aether news] fetch failed:", f.url, err);
+        }
+      }));
+      all.sort((a, b) => new Date(b.date) - new Date(a.date));
+      if (!cancelled) {
+        setItems(all.slice(0, count));
+        setLoaded(true);
+      }
+    };
+    fetchAll();
+    const tick = setInterval(fetchAll, 10 * 60_000);
+    return () => { cancelled = true; clearInterval(tick); };
+  }, [JSON.stringify(feeds), count]);
+
+  const openArticle = (url) => {
+    if (!hass || !url) return;
+    try {
+      hass.callApi("POST", "events/aether_browser_open", {
+        kind: "url", value: url, title: "Article",
+      });
+    } catch (err) {
+      // Fallback: open in a new tab
+      try { window.open(url, "_blank", "noopener"); } catch {}
+    }
+  };
+
+  return (
+    <div className="home-panel news-panel">
+      <div className="home-panel-head">
+        <span className="home-panel-title">News</span>
+        <span className="home-panel-meta">{items.length}</span>
+      </div>
+      <div className="home-panel-body">
+        {!loaded ? null : items.length === 0 ? (
+          <div className="home-panel-empty">No headlines right now.</div>
+        ) : items.map((it, i) => (
+          <button
+            key={i}
+            className="news-row"
+            onClick={() => openArticle(it.link)}
+          >
+            <span className="news-source">{it.source}</span>
+            <span className="news-title">{decodeHtmlEntities(it.title)}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function decodeHtmlEntities(s) {
+  if (!s) return "";
+  const tmp = document.createElement("textarea");
+  tmp.innerHTML = s;
+  return tmp.value;
+}
+
+// ─── Tile: Pinned music ──────────────────────────────────────────────────
+// Mirrors the music page's Listen Now pins (stored at user_data key
+// "aether_pins"). Tap a pin → play on the first playing room, or the first
+// configured room if nothing is currently playing.
+function PinnedMusicTile({ hass, navigate, playingRooms, liveRooms }) {
+  const [pins, setPins] = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!hass) return;
+    let cancelled = false;
+    (async () => {
+      let value = null;
+      try {
+        const r = await hass.callWS({ type: "frontend/get_user_data", key: "aether_pins" });
+        if (Array.isArray(r?.value)) value = r.value;
+      } catch {}
+      if (!value) {
+        try {
+          const local = localStorage.getItem("aether_pins");
+          if (local) value = JSON.parse(local);
+        } catch {}
+      }
+      if (!cancelled) {
+        setPins(value || []);
+        setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [hass]);
+
+  const targetRoom = playingRooms[0] || liveRooms[0];
+
+  const play = (pin) => {
+    if (!hass || !pin?.media_content_id || !targetRoom?.mediaPlayer) {
+      navigate("music");
+      return;
+    }
+    if (pin.can_expand && !pin.can_play) {
+      // Drill-in items (artists, etc.) — punt to the music page so the
+      // user can browse inside.
+      navigate("music");
+      return;
+    }
+    callService(hass, "media_player.play_media", {
+      entity_id:          targetRoom.mediaPlayer,
+      media_content_id:   pin.media_content_id,
+      media_content_type: pin.media_content_type || "album",
+    });
+  };
+
+  return (
+    <div className="home-panel pinned-music-panel">
+      <div className="home-panel-head">
+        <span className="home-panel-title">Pinned music</span>
+        <span className="home-panel-meta">{pins.length}</span>
+        <button
+          className="pinned-music-open"
+          onClick={() => navigate("music")}
+        >Open library</button>
+      </div>
+      <div className="home-panel-body">
+        {!loaded ? null : pins.length === 0 ? (
+          <div className="home-panel-empty">
+            No pins yet. Tap the bookmark on any album, playlist, or artist
+            in the music library to pin it here.
+          </div>
+        ) : (
+          <div className="pinned-music-grid">
+            {pins.slice(0, 8).map((p) => (
+              <button
+                key={p.media_content_id}
+                className="pinned-music-card"
+                onClick={() => play(p)}
+                title={p.title}
+              >
+                {p.image
+                  ? <img src={p.image} alt="" loading="lazy" />
+                  : <div className="pinned-music-art-placeholder" />}
+                <span className="pinned-music-card-title">{p.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
