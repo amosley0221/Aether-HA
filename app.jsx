@@ -7,6 +7,8 @@ function App() {
   const [page, setPage] = React.useState("home");
   const [chatOpen, setChatOpen] = React.useState(false);
   const [chatAutoListen, setChatAutoListen] = React.useState(false);
+  const [editHome, setEditHome] = React.useState(false);
+  const [avatarMenuOpen, setAvatarMenuOpen] = React.useState(false);
   const navigate = (p) => setPage(p);
 
   // Wake-word listener (if configured). Runs continuously when enabled,
@@ -234,13 +236,39 @@ function App() {
         >
           <span className="dot" /> {statusLabel}
         </button>
-        <div className="brand-avatar">
-          {(window.AETHER_CONFIG?.user?.name || hass?.user?.name || "?").slice(0, 1).toUpperCase()}
+        <div className="brand-avatar-wrap">
+          <button
+            className="brand-avatar"
+            onClick={() => setAvatarMenuOpen((v) => !v)}
+            aria-label="Account menu"
+          >
+            {(window.AETHER_CONFIG?.user?.name || hass?.user?.name || "?").slice(0, 1).toUpperCase()}
+          </button>
+          {avatarMenuOpen && (
+            <>
+              <div
+                className="avatar-menu-backdrop"
+                onClick={() => setAvatarMenuOpen(false)}
+              />
+              <div className="avatar-menu">
+                <button
+                  className="avatar-menu-item"
+                  onClick={() => {
+                    setAvatarMenuOpen(false);
+                    setPage("home");
+                    setEditHome(true);
+                  }}
+                >
+                  <Icon name="grid" size={14} /> Edit home
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
       <main>
-        {page === "home"      && <HomePage navigate={navigate} />}
+        {page === "home"      && <HomePage navigate={navigate} editMode={editHome} onExitEdit={() => setEditHome(false)} />}
         {page === "music"     && <MusicPage />}
         {page === "dashboard" && <DashboardPage />}
       </main>
