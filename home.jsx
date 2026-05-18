@@ -434,7 +434,7 @@ function CalendarTile({ hass }) {
     <>
       <div className="home-panel calendar-panel" onClick={() => setDayOpen(true)}>
         <div className="home-panel-head">
-          <span className="home-panel-title">CALENDAR</span>
+          <span className="home-panel-title">Calendar</span>
           <span className="home-panel-meta">{dayLabel}</span>
         </div>
         <div className="home-panel-body">
@@ -558,7 +558,7 @@ function UpcomingTile({ hass }) {
   return (
     <div className="home-panel upcoming-panel">
       <div className="home-panel-head">
-        <span className="home-panel-title">NEXT 3 DAYS</span>
+        <span className="home-panel-title">Next 3 days</span>
       </div>
       <div className="home-panel-body">
         {byDay.length === 0 ? (
@@ -643,7 +643,7 @@ function TodoTile({ hass }) {
   return (
     <div className="home-panel todo-panel">
       <div className="home-panel-head">
-        <span className="home-panel-title">TO-DO</span>
+        <span className="home-panel-title">To-Do</span>
         <div className="todo-filters">
           {["all", "active", "done"].map((f) => (
             <button
@@ -768,7 +768,7 @@ function NotesTile({ hass }) {
   return (
     <div className="home-panel notes-panel">
       <div className="home-panel-head">
-        <span className="home-panel-title">NOTES</span>
+        <span className="home-panel-title">Notes</span>
         <span className="home-panel-meta">{notes.length}</span>
         <button className="notes-new-btn" onClick={newNote}>+ New note</button>
       </div>

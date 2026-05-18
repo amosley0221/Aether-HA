@@ -348,8 +348,10 @@
   display: flex; align-items: baseline; gap: 10px;
 }
 .home-panel-title {
-  font-family: var(--font-serif, "Cormorant Garamond", "Playfair Display", serif);
-  font-size: 22px; letter-spacing: .02em;
+  /* Matches the rest of Aether — same as `.h-section-head h2`. */
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -.01em;
   color: var(--ink);
   flex-shrink: 0;
 }
@@ -706,7 +708,7 @@
 
   .home-tiles { gap: 12px; }
   .home-panel { padding: 16px 18px; min-height: 180px; }
-  .home-panel-title { font-size: 18px; }
+  .home-panel-title { font-size: 16px; }
   .notes-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
   .note-card { min-height: 110px; padding: 10px 12px; }
   .note-card-title { font-size: 16px; }
