@@ -348,8 +348,11 @@
   display: flex; align-items: baseline; gap: 10px;
 }
 .home-panel-title {
-  /* Matches the rest of Aether — same as `.h-section-head h2`. */
-  font-size: 18px;
+  /* Matches the rest of Aether — same as `.h-section-head h2`.
+     Explicit font-family so this can never inherit the serif stack
+     used inside the notes editor. */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -.01em;
   color: var(--ink);
