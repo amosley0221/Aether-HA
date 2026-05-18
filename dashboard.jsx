@@ -1012,7 +1012,23 @@ function CarSection({ car, hass, editMode, onHideSection }) {
   // We treat ANY of these as "installing" so we cover both shapes.
   // Tesla also has a ~2-minute cancellable countdown after Install is
   // clicked before progress streams — `pendingInstall` covers that gap.
-  const updateState     = s(e.update);
+
+  // Auto-detect the update entity if the configured one isn't in
+  // hass.states (Tessie's entity ID may differ from what's in
+  // aether-config.js, or the line may be missing entirely). We match
+  // any update.* entity whose object_id starts with the car's slug
+  // (derived from the lock entity, e.g. "lock.tone_lock" -> "tone").
+  const carSlug = (e.lock || e.battery || "").split(".")[1]?.replace(/_(lock|battery_level)$/, "") || null;
+  const resolvedUpdateEntity = React.useMemo(() => {
+    if (e.update && hass?.states?.[e.update]) return e.update;
+    if (!hass?.states || !carSlug) return e.update || null;
+    const match = Object.keys(hass.states).find((k) =>
+      k.startsWith(`update.${carSlug}`) &&
+      hass.states[k].state !== "unavailable"
+    );
+    return match || e.update || null;
+  }, [hass?.states, e.update, carSlug]);
+  const updateState     = resolvedUpdateEntity ? s(resolvedUpdateEntity) : null;
   const updateAvail     = updateState && updateState.state === "on";
   const updateIP        = updateState?.attributes?.in_progress;
   const updatePctAttr   = updateState?.attributes?.update_percentage;
@@ -1024,7 +1040,7 @@ function CarSection({ car, hass, editMode, onHideSection }) {
   const updateInstalled = updateState?.attributes?.installed_version;
   const [pendingInstall, setPendingInstall] = React.useState(0);
   const isPending       = pendingInstall > 0;
-  const showUpdate      = e.update && (updateAvail || updateInstalling || isPending);
+  const showUpdate      = resolvedUpdateEntity && (updateAvail || updateInstalling || isPending);
 
   // Clear pending once we see real progress, or after 5 minutes as a
   // fallback (covers a failed/cancelled install).
@@ -1038,9 +1054,10 @@ function CarSection({ car, hass, editMode, onHideSection }) {
   }, [isPending, updateInstalling, pendingInstall]);
 
   const installUpdate = async () => {
+    if (!resolvedUpdateEntity) return;
     setPendingInstall(Date.now());
     try {
-      await hass.callService("update", "install", {}, { entity_id: e.update });
+      await hass.callService("update", "install", {}, { entity_id: resolvedUpdateEntity });
     } catch (err) {
       console.error("[aether car] update install failed:", err);
       alert("Update install failed: " + (err?.message || err));
