@@ -375,9 +375,38 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   };
 
   // ─── Text-to-speech: try browser SpeechSynthesis, fall back to HA TTS ─
+  const [isSpeaking, setIsSpeaking] = React.useState(false);
+
+  // Strip emojis, markdown asterisks, and other characters TTS engines
+  // mispronounce. The agent often emits 👋, 🎉, **bold**, etc. for
+  // emphasis - these read aloud as "waving hand sign", "party popper",
+  // or literal stars, which breaks immersion.
+  const cleanForSpeech = (text) => text
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}]/gu, "")
+    .replace(/\*+/g, "")          // **bold** -> bold
+    .replace(/_{2,}/g, "")         // __underline__
+    .replace(/`+/g, "")            // `code`
+    .replace(/\s{2,}/g, " ")       // collapse extra whitespace from stripped chars
+    .trim();
+
+  const cancelSpeech = React.useCallback(() => {
+    try { window.speechSynthesis?.cancel(); } catch {}
+    // Also stop HA TTS if we routed through it (media_player playing audio).
+    const mp = voiceCfg?.ttsMediaPlayer;
+    if (mp && hass?.callService) {
+      hass.callService("media_player", "media_stop", { entity_id: mp })
+        .catch(() => {/* ignore — player may not support stop */});
+    }
+    setIsSpeaking(false);
+  }, [voiceCfg, hass]);
+
   const speak = React.useCallback(async (text) => {
     if (!speakReplies || !text) return;
-    console.log("[aether] speak:", text.slice(0, 80));
+    const speakable = cleanForSpeech(text);
+    if (!speakable) return;
+    console.log("[aether] speak:", speakable.slice(0, 80));
+    setIsSpeaking(true);
+    const onComplete = () => setIsSpeaking(false);
 
     const tryBrowserTTS = () => new Promise((resolve) => {
       if (typeof window.speechSynthesis === "undefined") {
@@ -388,7 +417,7 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
       const doSpeak = () => {
         try {
           window.speechSynthesis.cancel();
-          const u = new SpeechSynthesisUtterance(text);
+          const u = new SpeechSynthesisUtterance(speakable);
           u.lang  = voiceCfg.language || "en-US";
           u.rate  = voiceCfg.rate  ?? 1.0;
           u.pitch = voiceCfg.pitch ?? 1.0;
@@ -405,13 +434,14 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
           }
           let started = false;
           u.onstart = () => { started = true; console.log("[aether] browser TTS started, voice:", u.voice?.name || "default"); resolve(true); };
-          u.onend   = () => console.log("[aether] browser TTS finished");
-          u.onerror = (e) => { console.warn("[aether] browser TTS error:", e.error); if (!started) resolve(false); };
+          u.onend   = () => { console.log("[aether] browser TTS finished"); onComplete(); };
+          u.onerror = (e) => { console.warn("[aether] browser TTS error:", e.error); onComplete(); if (!started) resolve(false); };
           window.speechSynthesis.speak(u);
           // If onstart doesn't fire within 1.2s, assume the browser silently failed
           setTimeout(() => { if (!started) resolve(false); }, 1200);
         } catch (e) {
           console.warn("[aether] browser TTS exception:", e);
+          onComplete();
           resolve(false);
         }
       };
@@ -431,29 +461,34 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
       const svc = voiceCfg.ttsService;
       if (!mp || !hass) {
         console.log("[aether] HA TTS not configured (need voice.ttsMediaPlayer + voice.ttsService)");
+        onComplete();
         return false;
       }
       try {
         if (svc) {
-          // Modern tts.speak: TTS service entity goes in TARGET, not data.
-          // Signature: callService(domain, service, serviceData, target)
           await hass.callService(
             "tts",
             "speak",
-            { media_player_entity_id: mp, message: text, cache: true },
+            { media_player_entity_id: mp, message: speakable, cache: true },
             { entity_id: svc }
           );
         } else {
-          // Legacy fallback: tts.google_translate_say — target is the player
           await hass.callService("tts", "google_translate_say", {
             entity_id: mp,
-            message: text,
+            message: speakable,
           });
         }
         console.log("[aether] HA TTS sent via", svc || "tts.google_translate_say", "→", mp);
+        // HA's tts.speak resolves once the audio is queued, not after it
+        // finishes playing. Estimate the speaking duration from the text
+        // length (~14 chars/second is a comfortable speech rate) so the
+        // follow-up listen kicks in after the speaker actually stops.
+        const approxMs = Math.min(30000, Math.max(1500, speakable.length * 71));
+        setTimeout(onComplete, approxMs);
         return true;
       } catch (e) {
         console.warn("[aether] HA TTS failed:", e?.message || e);
+        onComplete();
         return false;
       }
     };
@@ -529,6 +564,30 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   //      or double-start. Solved by routing through startListeningRef.
   //   3) Re-arming on every state change. Solved by a "fired once" ref
   //      that resets only when the dialog closes.
+  // After TTS finishes speaking, optionally auto-start the mic for a few
+  // seconds so the user can reply naturally without re-tapping. Disable
+  // by setting voice.autoFollowup: false in aether-config.js. Cancels
+  // cleanly if the user opens/closes the chat in the meantime.
+  const autoFollowup = voiceCfg.autoFollowup !== false;
+  const wasSpeakingRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!open || !autoFollowup) {
+      wasSpeakingRef.current = isSpeaking;
+      return;
+    }
+    if (wasSpeakingRef.current && !isSpeaking) {
+      // Speech just ended — open the mic
+      const t = setTimeout(() => {
+        if (!listeningRef.current) {
+          try { startListeningRef.current?.(); } catch {}
+        }
+      }, 200);
+      wasSpeakingRef.current = false;
+      return () => clearTimeout(t);
+    }
+    wasSpeakingRef.current = isSpeaking;
+  }, [isSpeaking, open, autoFollowup]);
+
   const autoListenFiredRef   = React.useRef(false);
   const autoListenTimersRef  = React.useRef([]);
   const startListeningRef    = React.useRef(startListening);
@@ -544,6 +603,8 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
     if (!open) {
       autoListenFiredRef.current = false;
       cancelAutoListenTimers();
+      // Closing the chat should stop any in-flight speech immediately.
+      cancelSpeech();
     }
   }, [open]);
 
@@ -574,7 +635,7 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   const clearChat = () => {
     setMessages([]);
     setConversationId(null);
-    try { window.speechSynthesis?.cancel(); } catch {}
+    cancelSpeech();
   };
 
   if (!open) return null;
@@ -598,6 +659,14 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
             )}
           </h3>
           <div style={{ display: "flex", gap: 8 }}>
+            {isSpeaking && (
+              <button
+                className="modal-close chat-stop-speak"
+                onClick={cancelSpeech}
+                title="Stop speaking"
+                aria-label="Stop speaking"
+              >■</button>
+            )}
             {messages.length > 0 && (
               <button className="modal-close" onClick={clearChat} title="Clear">↺</button>
             )}
