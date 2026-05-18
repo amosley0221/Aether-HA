@@ -173,20 +173,33 @@ function App() {
       name: s.attributes?.friendly_name || s.entity_id,
     }));
 
-    const updates = states.filter((s) =>
-      s.entity_id.startsWith("update.") &&
-      (s.state === "on" || s.attributes?.in_progress) &&
-      !isIgnored(s.entity_id)
-    ).map((s) => ({
-      entity_id: s.entity_id,
-      name: s.attributes?.friendly_name || s.entity_id,
-      installed: s.attributes?.installed_version,
-      latest: s.attributes?.latest_version,
-      // Tessie & most integrations: `in_progress` is either a boolean
-      // (still installing, percentage unknown) or a number 0–100.
-      inProgress: s.attributes?.in_progress,
-      releaseUrl: s.attributes?.release_url,
-    }));
+    const updates = states.filter((s) => {
+      if (!s.entity_id.startsWith("update.")) return false;
+      if (isIgnored(s.entity_id)) return false;
+      if (s.state === "on") return true;
+      // Some installs flip the entity to "off" briefly while the
+      // attributes still report progress (HA 2024.11+ split
+      // `update_percentage` out from `in_progress`).
+      const ip  = s.attributes?.in_progress;
+      const pct = s.attributes?.update_percentage;
+      return ip === true || typeof ip === "number" || typeof pct === "number";
+    }).map((s) => {
+      const ip  = s.attributes?.in_progress;
+      const pct = s.attributes?.update_percentage;
+      const percentage = typeof pct === "number" ? pct
+                       : typeof ip === "number"  ? ip
+                       : null;
+      const installing = ip === true || percentage != null;
+      return {
+        entity_id: s.entity_id,
+        name: s.attributes?.friendly_name || s.entity_id,
+        installed: s.attributes?.installed_version,
+        latest: s.attributes?.latest_version,
+        installing,
+        percentage,
+        releaseUrl: s.attributes?.release_url,
+      };
+    });
 
     return { batteries, unavailable, updates };
   }, [hass]);
@@ -887,29 +900,48 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
 // ─── Status dialog: lists active issues from the brandbar status pill ────
 function StatusDialog({ open, onClose, issues, hass }) {
   // Track which updates the user has just clicked, so the button shows
-  // a spinner before the next HA state push arrives with `in_progress`.
-  // (Tessie can take a few seconds to acknowledge the install.)
+  // a "Starting…" state during the gap between clicking Install and
+  // the integration reporting progress. Tesla in particular sits in a
+  // ~2 minute grace period (cancellable in the Tesla app) before the
+  // update actually starts streaming, so we keep this flag for ~5
+  // minutes — once the entity reports real progress, the flag is
+  // cleared automatically by the effect below.
   const [pending, setPending] = React.useState({});
   const installUpdate = async (entity_id) => {
     if (!hass?.callService) return;
-    setPending((p) => ({ ...p, [entity_id]: true }));
+    setPending((p) => ({ ...p, [entity_id]: Date.now() }));
     try {
       await hass.callService("update", "install", {}, { entity_id });
     } catch (err) {
       console.error("[aether status] update install failed:", err);
       alert("Update install failed: " + (err?.message || err));
-    } finally {
-      // Drop the "pending" flag once the entity reports its own
-      // in_progress, or after a generous timeout in case HA never
-      // updates (Tessie sometimes silently no-ops if the car is
-      // unreachable).
-      setTimeout(() => setPending((p) => {
+      setPending((p) => {
         const next = { ...p };
         delete next[entity_id];
         return next;
-      }), 20000);
+      });
     }
   };
+
+  // Auto-clear "pending" once we see the entity actually report
+  // progress, and as a fallback expire it after 5 minutes so a
+  // failed/cancelled install doesn't leave the button stuck.
+  React.useEffect(() => {
+    if (!Object.keys(pending).length) return;
+    const installingNow = new Set(issues.updates.filter((u) => u.installing).map((u) => u.entity_id));
+    const now = Date.now();
+    setPending((p) => {
+      const next = { ...p };
+      let changed = false;
+      for (const [id, startedAt] of Object.entries(p)) {
+        if (installingNow.has(id) || now - startedAt > 5 * 60 * 1000) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : p;
+    });
+  }, [issues.updates, pending]);
 
   if (!open) return null;
   const total = issues.batteries.length + issues.unavailable.length + issues.updates.length;
@@ -965,11 +997,19 @@ function StatusDialog({ open, onClose, issues, hass }) {
                 <span className="status-count">{issues.updates.length}</span>
               </div>
               {issues.updates.map((i) => {
-                // `in_progress` is either a boolean (installing,
-                // percentage unknown) or a number 0–100.
-                const ip = i.inProgress;
-                const installing = ip === true || (typeof ip === "number" && ip > 0) || pending[i.entity_id];
-                const pct = typeof ip === "number" ? Math.max(0, Math.min(100, ip)) : null;
+                const isPending = !!pending[i.entity_id];
+                const installing = i.installing || isPending;
+                const pct = i.percentage != null
+                  ? Math.max(0, Math.min(100, Math.round(i.percentage)))
+                  : null;
+                // Tesla sits in a 2-minute cancellable countdown before
+                // the install actually starts streaming. During that
+                // window the entity hasn't reported a percentage yet,
+                // so distinguish "Starting…" from "Installing X%".
+                const label = !installing       ? "Install"
+                            : pct != null      ? `Installing ${pct}%`
+                            : i.installing     ? "Installing…"
+                            :                    "Starting…";
                 return (
                   <div key={i.entity_id} className="status-row status-row-update">
                     <div className="status-row-update-head">
@@ -984,9 +1024,7 @@ function StatusDialog({ open, onClose, issues, hass }) {
                         onClick={() => installUpdate(i.entity_id)}
                         disabled={installing}
                       >
-                        {installing
-                          ? (pct != null ? `Installing ${pct}%` : "Installing…")
-                          : "Install"}
+                        {label}
                       </button>
                     </div>
                     {installing && (

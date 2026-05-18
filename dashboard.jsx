@@ -1006,29 +1006,56 @@ function CarSection({ car, hass, editMode, onHideSection }) {
                      : "#2f8f63";
 
   // ─── Software update (Tessie) ──────────────────────────────────────────
-  // The update entity is "on" when an update is available, "off"
-  // otherwise. `in_progress` is either a boolean or 0–100 number while
-  // installing. Show a row only when there's something to act on.
-  const updateState  = s(e.update);
-  const updateAvail  = updateState && updateState.state === "on";
-  const updateIP     = updateState?.attributes?.in_progress;
-  const updateInstalling = updateIP === true || (typeof updateIP === "number" && updateIP > 0);
-  const updatePct    = typeof updateIP === "number" ? Math.max(0, Math.min(100, updateIP)) : null;
-  const updateLatest = updateState?.attributes?.latest_version;
+  // Tessie exposes the standard HA update entity. Two attributes carry
+  // progress: `in_progress` (boolean OR number, depending on integration
+  // version) and `update_percentage` (HA 2024.11+ split this out).
+  // We treat ANY of these as "installing" so we cover both shapes.
+  // Tesla also has a ~2-minute cancellable countdown after Install is
+  // clicked before progress streams — `pendingInstall` covers that gap.
+  const updateState     = s(e.update);
+  const updateAvail     = updateState && updateState.state === "on";
+  const updateIP        = updateState?.attributes?.in_progress;
+  const updatePctAttr   = updateState?.attributes?.update_percentage;
+  const updatePct       = typeof updatePctAttr === "number" ? updatePctAttr
+                        : typeof updateIP      === "number" ? updateIP
+                        : null;
+  const updateInstalling = updateIP === true || updatePct != null;
+  const updateLatest    = updateState?.attributes?.latest_version;
   const updateInstalled = updateState?.attributes?.installed_version;
-  const [pendingInstall, setPendingInstall] = React.useState(false);
-  const showUpdate = e.update && (updateAvail || updateInstalling || pendingInstall);
+  const [pendingInstall, setPendingInstall] = React.useState(0);
+  const isPending       = pendingInstall > 0;
+  const showUpdate      = e.update && (updateAvail || updateInstalling || isPending);
+
+  // Clear pending once we see real progress, or after 5 minutes as a
+  // fallback (covers a failed/cancelled install).
+  React.useEffect(() => {
+    if (!isPending) return;
+    if (updateInstalling) { setPendingInstall(0); return; }
+    const remaining = 5 * 60 * 1000 - (Date.now() - pendingInstall);
+    if (remaining <= 0) { setPendingInstall(0); return; }
+    const t = setTimeout(() => setPendingInstall(0), remaining);
+    return () => clearTimeout(t);
+  }, [isPending, updateInstalling, pendingInstall]);
+
   const installUpdate = async () => {
-    setPendingInstall(true);
+    setPendingInstall(Date.now());
     try {
       await hass.callService("update", "install", {}, { entity_id: e.update });
     } catch (err) {
       console.error("[aether car] update install failed:", err);
       alert("Update install failed: " + (err?.message || err));
-    } finally {
-      setTimeout(() => setPendingInstall(false), 20000);
+      setPendingInstall(0);
     }
   };
+  const updateBtnLabel = !showUpdate || (!updateInstalling && !isPending) ? "Install"
+                      : updatePct != null   ? `Installing ${Math.round(updatePct)}%`
+                      : updateInstalling    ? "Installing…"
+                      :                       "Starting…";
+  const updateBtnDisabled = updateInstalling || isPending;
+  const updateShowBar     = updateInstalling || isPending;
+  const updateBarPct      = typeof updatePct === "number"
+                            ? Math.max(0, Math.min(100, Math.round(updatePct)))
+                            : null;
 
   return (
     <>
@@ -1160,18 +1187,16 @@ function CarSection({ car, hass, editMode, onHideSection }) {
                 <button
                   className="car-update-btn"
                   onClick={installUpdate}
-                  disabled={updateInstalling || pendingInstall}
+                  disabled={updateBtnDisabled}
                 >
-                  {updateInstalling || pendingInstall
-                    ? (updatePct != null ? `Installing ${updatePct}%` : "Installing…")
-                    : "Install"}
+                  {updateBtnLabel}
                 </button>
               </div>
-              {(updateInstalling || pendingInstall) && (
+              {updateShowBar && (
                 <div className="car-update-progress">
                   <div
-                    className={"car-update-progress-fill" + (updatePct == null ? " indeterminate" : "")}
-                    style={updatePct != null ? { width: `${updatePct}%` } : undefined}
+                    className={"car-update-progress-fill" + (updateBarPct == null ? " indeterminate" : "")}
+                    style={updateBarPct != null ? { width: `${updateBarPct}%` } : undefined}
                   />
                 </div>
               )}
