@@ -1462,9 +1462,16 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
 
   const sourceList    = mp?.attributes?.source_list || [];
   const currentSource = mp?.attributes?.source;
+  const currentAppId  = mp?.attributes?.app_id;
   const playing       = mp?.state === "playing";
-  const off           = mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable" ||
+  // LG's webOSTV integration sometimes reports state="off" while the TV
+  // is actively displaying content (firmware quirk, especially after
+  // WoL wake). Treat the TV as "on" if the entity reports a current
+  // source OR app_id - if SOMETHING is playing, the TV must be on.
+  const stateOff      = mp?.state === "off" || mp?.state === "standby" || mp?.state === "unavailable" ||
                         (remote && remote.state === "off");
+  const hasActive     = !!currentSource || !!currentAppId;
+  const off           = stateOff && !hasActive;
 
   // Inputs: hardcoded list from config if present, else auto-detected
   // from source_list by name pattern.
@@ -1661,7 +1668,6 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
             <div className="atv-row-label">Apps</div>
             <div className="atv-apps-grid">
               {apps.map((app) => {
-                const exists = sourceList.length === 0 || sourceList.includes(app.source);
                 const active = currentSource === app.source;
                 const icon = resolveAppIcon(app);
                 return (
@@ -1669,8 +1675,7 @@ function LGTVSection({ tv, hass, editMode, onHideSection }) {
                     key={app.name}
                     className={"atv-app-tile" + (active ? " active" : "")}
                     onClick={() => selectSource(app.source)}
-                    disabled={!exists}
-                    title={exists ? `Launch ${app.name}` : `${app.source} not in source list`}
+                    title={`Launch ${app.name}`}
                   >
                     <span
                       className="atv-app-icon"
