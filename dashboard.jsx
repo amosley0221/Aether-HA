@@ -1028,26 +1028,6 @@ function CarSection({ car, hass, editMode, onHideSection }) {
     );
     return match || e.update || null;
   }, [hass?.states, e.update, carSlug]);
-  // One-shot diagnostic so we can tell from console whether the update
-  // entity is being detected. Logs once per change of resolved entity.
-  const lastLoggedEntity = React.useRef(null);
-  React.useEffect(() => {
-    if (lastLoggedEntity.current === resolvedUpdateEntity) return;
-    lastLoggedEntity.current = resolvedUpdateEntity;
-    const st = resolvedUpdateEntity ? hass?.states?.[resolvedUpdateEntity] : null;
-    console.log("[aether car] update detect:", {
-      configured: e.update,
-      carSlug,
-      resolved: resolvedUpdateEntity,
-      exists: !!st,
-      state: st?.state,
-      in_progress: st?.attributes?.in_progress,
-      update_percentage: st?.attributes?.update_percentage,
-      installed: st?.attributes?.installed_version,
-      latest: st?.attributes?.latest_version,
-      allUpdateEntities: hass?.states ? Object.keys(hass.states).filter(k => k.startsWith("update.")) : [],
-    });
-  }, [resolvedUpdateEntity, hass?.states, e.update, carSlug]);
   const updateState     = resolvedUpdateEntity ? s(resolvedUpdateEntity) : null;
   const updateAvail     = updateState && updateState.state === "on";
   const updateIP        = updateState?.attributes?.in_progress;
