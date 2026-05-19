@@ -478,7 +478,16 @@ function CalendarDayModal({ open, onClose, events, dayLabel }) {
   const scrollTop = useModalAnchor(open);
   if (!open) return null;
   return ReactDOM.createPortal(
-    <div className="modal-backdrop home-modal-fixed" onClick={onClose}>
+    <div
+      className="modal-backdrop home-modal-fixed"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        top: 0, left: 0, right: 0, bottom: 0,
+        width: "auto", height: "auto",
+        zIndex: 99999,
+      }}
+    >
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{dayLabel}</h3>
@@ -505,7 +514,7 @@ function CalendarDayModal({ open, onClose, events, dayLabel }) {
         </div>
       </div>
     </div>,
-    document.querySelector("aether-panel") || document.body
+    document.body
   );
 }
 
@@ -876,7 +885,16 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
   };
 
   return ReactDOM.createPortal(
-    <div className="modal-backdrop home-modal-fixed" onClick={onClose}>
+    <div
+      className="modal-backdrop home-modal-fixed"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        top: 0, left: 0, right: 0, bottom: 0,
+        width: "auto", height: "auto",
+        zIndex: 99999,
+      }}
+    >
       <div className="modal note-editor-modal" onClick={(e) => e.stopPropagation()}>
         <div className="note-editor-head">
           <input
@@ -932,7 +950,7 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
         </div>
       </div>
     </div>,
-    document.querySelector("aether-panel") || document.body
+    document.body
   );
 }
 
@@ -1122,21 +1140,26 @@ function SportsTile({ hass }) {
   // Build the "tile preview" list.
   //   - Only games within the next 7 days (drops ESPN's preseason
   //     placeholders that show up at 12:00 AM months out).
-  //   - Favorites bubble to the top; other games from the enabled
-  //     leagues fill remaining slots.
-  //   - League dropdown narrows the list to a single league.
+  //   - Favorites always bubble to the top.
+  //   - In "All leagues" mode, the remaining slots are filled by
+  //     round-robining one non-favorite game per league at a time, so
+  //     a league with 10 concurrent games can't shut out a league with
+  //     1 game (e.g. an MLB Friday night vs an NHL playoff game).
+  //   - In single-league mode, just show favorites then everything
+  //     else from that league.
   const previewGames = React.useMemo(() => {
     const now = Date.now();
     const weekOut = now + 7 * 86400 * 1000;
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
 
     const favGames = [];
-    const otherGames = [];
+    const otherByLeague = {};   // leagueKey -> sorted [games]
 
     for (const lk of leagues) {
       if (leagueFilter !== "all" && lk !== leagueFilter) continue;
       const games = byLeague[lk] || [];
       const favSet = favorites[lk];
+      const bucket = [];
       for (const g of games) {
         const t = new Date(g.date).getTime();
         if (Number.isNaN(t)) continue;
@@ -1147,13 +1170,37 @@ function SportsTile({ hass }) {
             g.home?.abbreviation === abbr || g.away?.abbreviation === abbr
           ));
         const item = { ...g, leagueKey: lk, isFavorite: isFav };
-        if (isFav) favGames.push(item); else otherGames.push(item);
+        if (isFav) favGames.push(item); else bucket.push(item);
       }
+      otherByLeague[lk] = bucket;
     }
+
     const rank = (g) => g.state === "in" ? 0 : g.state === "pre" ? 1 : 2;
     const sortFn = (a, b) => rank(a) - rank(b) || new Date(a.date) - new Date(b.date);
-    favGames.sort(sortFn); otherGames.sort(sortFn);
-    return [...favGames, ...otherGames].slice(0, tileLimit);
+    favGames.sort(sortFn);
+    for (const lk of Object.keys(otherByLeague)) otherByLeague[lk].sort(sortFn);
+
+    const result = [...favGames];
+
+    if (leagueFilter !== "all") {
+      result.push(...(otherByLeague[leagueFilter] || []));
+      return result.slice(0, tileLimit);
+    }
+
+    // Round-robin: one game per league per pass.
+    while (result.length < tileLimit) {
+      let added = 0;
+      for (const lk of leagues) {
+        if (result.length >= tileLimit) break;
+        const bucket = otherByLeague[lk];
+        if (bucket && bucket.length > 0) {
+          result.push(bucket.shift());
+          added += 1;
+        }
+      }
+      if (added === 0) break;
+    }
+    return result;
   }, [byLeague, leagues.join(","), JSON.stringify(favorites), leagueFilter, tileLimit]);
 
   // Helpers for the league filter UI inside the panel head.
@@ -1244,7 +1291,16 @@ function SportsAllModal({ open, onClose, leagues, byLeague }) {
   const scrollTop = useModalAnchor(open);
   if (!open) return null;
   return ReactDOM.createPortal(
-    <div className="modal-backdrop home-modal-fixed" onClick={onClose}>
+    <div
+      className="modal-backdrop home-modal-fixed"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        top: 0, left: 0, right: 0, bottom: 0,
+        width: "auto", height: "auto",
+        zIndex: 99999,
+      }}
+    >
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Today's scores</h3>
@@ -1273,7 +1329,7 @@ function SportsAllModal({ open, onClose, leagues, byLeague }) {
         </div>
       </div>
     </div>,
-    document.querySelector("aether-panel") || document.body
+    document.body
   );
 }
 
