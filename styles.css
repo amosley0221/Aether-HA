@@ -157,6 +157,87 @@ input { font: inherit; color: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-entity { color: var(--ink-3); font-size: 11px;
   background: rgba(0,0,0,.04); padding: 2px 6px; border-radius: 4px; }
+.status-group-sub {
+  font-size: 11px; color: var(--ink-3);
+  text-transform: none; letter-spacing: normal;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+/* Device-grouped unavailable rows. Singleton-entity devices still render
+   inline as .status-row above; this is for devices with 2+ affected
+   entities that collapse into an expandable group. */
+.status-device-group {
+  border-bottom: 1px solid var(--hairline-2, rgba(0,0,0,.05));
+}
+.status-device-group:last-child { border-bottom: 0; }
+.status-device-head {
+  width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+}
+.status-device-head:hover { background: rgba(0,0,0,.03); }
+.status-device-name {
+  flex: 1; min-width: 0;
+  font-size: 13px; color: var(--ink); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.status-device-count {
+  font-size: 12px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.status-device-chevron {
+  color: var(--ink-3); font-size: 12px;
+  width: 14px; text-align: center;
+}
+.status-device-entities {
+  padding: 2px 0 8px 18px;
+}
+.status-row-sub {
+  padding: 6px 0;
+  border-top: 1px dashed var(--hairline-2, rgba(0,0,0,.05));
+  border-bottom: 0;
+}
+
+/* Recent errors section — clustered by integration with the most-named
+   entity per cluster surfaced as a hint. */
+.status-error-row {
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--hairline-2, rgba(0,0,0,.05));
+}
+.status-error-row:last-child { border-bottom: 0; }
+.status-error-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.status-error-integration {
+  font-size: 13px; color: var(--ink);
+  font-weight: 600;
+}
+.status-error-count {
+  font-size: 11px; color: var(--ink-3);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.status-error-entity {
+  font-size: 12px; color: var(--ink-2);
+  margin-top: 3px;
+}
+.status-error-entity code {
+  background: rgba(0,0,0,.04); padding: 1px 6px;
+  border-radius: 4px; font-size: 11px;
+}
+.status-error-entity-count { color: var(--ink-3); }
+.status-error-message {
+  font-size: 11px; color: var(--ink-3);
+  margin-top: 4px;
+  font-family: ui-monospace, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .status-battery { color: #8a5a14; font-weight: 600; font-size: 13px; }
 .status-battery.critical { color: #d8462e; }
 .status-version { color: var(--ink-3); font-size: 12px; }

@@ -925,6 +925,76 @@ function ChatDialog({ open, onClose, hass, autoListen, onAutoListenConsumed }) {
   );
 }
 
+// ─── Status pill helpers ─────────────────────────────────────────────────
+// Group unavailable entities by a "device key" derived from the entity_id,
+// stripping known per-device config-switch suffixes so e.g. eight Sonos
+// switches for one speaker collapse into a single row that expands on tap.
+// This is the diagnostic that turns "60 unavailable entities" into "8
+// affected devices, one of them is Move 2 with 8 of its own entities down" —
+// which is the actual signal the user is trying to spot.
+const STATUS_DEVICE_SUFFIXES = /(_crossfade|_loudness|_night_sound|_speech_enhancement|_surround_enabled|_surround_music_full_volume|_subwoofer_enabled|_tv_autoplay|_ungroup_on_autoplay|_motion_detection|_live_view|_audio_input_format|_charge_cable_lock|_charge_port_door|_steering_wheel_heater|_defrost_mode|_sentry_mode|_valet_mode|_vent_windows|_climate|_battery)$/;
+
+function statusDeviceKey(entity_id) {
+  const local = (entity_id.split(".")[1] || "");
+  return local.replace(STATUS_DEVICE_SUFFIXES, "");
+}
+function statusHumanizeKey(key) {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Map an HA logger name (homeassistant.components.<integration>.foo) to a
+// human label. Fallback uses the logger slug capitalized.
+const STATUS_INTEGRATION_LABEL = {
+  sonos: "Sonos", ring: "Ring", webostv: "LG webOS",
+  media_player: "Media player", switch: "Switch", camera: "Camera",
+  nanoleaf: "Nanoleaf", apple_tv: "Apple TV", tessie: "Tesla (Tessie)",
+  hassio: "Supervisor", go2rtc: "go2rtc", google_nest_sdm: "Google Nest",
+  pychromecast: "Chromecast", homekit_controller: "HomeKit",
+  alarmo: "Alarmo", calendar: "Calendar", remote_calendar: "Remote Calendar",
+  haffmpeg: "Camera (ffmpeg)", music_assistant: "Music Assistant",
+};
+function statusIntegrationFromLogger(logger) {
+  const m = logger.match(/^homeassistant\.components\.([a-z0-9_]+)/);
+  if (!m) return null;
+  return STATUS_INTEGRATION_LABEL[m[1]] || (m[1].charAt(0).toUpperCase() + m[1].slice(1));
+}
+
+// Parse HA's /api/error_log text dump (last ~500 lines) and group entries
+// by integration. For each group we count occurrences, capture the most
+// recent message, and tally entity_id references so we can surface "this
+// integration's errors mostly involve <entity>".
+const STATUS_LOG_LINE = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) (ERROR|WARNING|CRITICAL) \(.*?\) \[(.*?)\] (.+)$/;
+const STATUS_ENTITY_REF = /\b[a-z][a-z_]+\.[a-z0-9_]+\b/g;
+function statusParseLog(text) {
+  const allLines = (text || "").split("\n");
+  // Only consider the last 600 raw lines so a long-lived install doesn't
+  // bog the parser. Errors at the bottom are the most recent and most
+  // diagnostically useful.
+  const lines = allLines.slice(-600);
+  const groups = new Map();
+  for (const line of lines) {
+    const m = line.match(STATUS_LOG_LINE);
+    if (!m) continue;
+    const [, , level, logger, message] = m;
+    const integration = statusIntegrationFromLogger(logger) || "Other";
+    let g = groups.get(integration);
+    if (!g) {
+      g = { integration, count: 0, lastMessage: "", levels: new Set(), entityCounts: new Map() };
+      groups.set(integration, g);
+    }
+    g.count++;
+    g.lastMessage = message;
+    g.levels.add(level);
+    const refs = message.match(STATUS_ENTITY_REF);
+    if (refs) for (const ref of refs) g.entityCounts.set(ref, (g.entityCounts.get(ref) || 0) + 1);
+  }
+  for (const g of groups.values()) {
+    const top = [...g.entityCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (top) g.topEntity = { id: top[0], count: top[1] };
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
+}
+
 // ─── Status dialog: lists active issues from the brandbar status pill ────
 function StatusDialog({ open, onClose, issues, hass }) {
   // Track which updates the user has just clicked, so the button shows
@@ -935,6 +1005,49 @@ function StatusDialog({ open, onClose, issues, hass }) {
   // minutes — once the entity reports real progress, the flag is
   // cleared automatically by the effect below.
   const [pending, setPending] = React.useState({});
+
+  // ─── Log diagnostics & device grouping ─────────────────────────────
+  // Fetch HA's /api/error_log when the dialog opens, parse it, and surface
+  // a "Recent errors" view grouped by integration. This is the diagnostic
+  // signal that was invisible during last night's Move 2 cascade — having
+  // it in the pill turns "60 unavailable entities" into "Sonos is the
+  // integration logging the most failures and Move 2 is the device named
+  // most often in those failures."
+  const [logErrors, setLogErrors] = React.useState([]);
+  const [logLoaded, setLogLoaded] = React.useState(false);
+  React.useEffect(() => {
+    if (!open || !hass) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const text = await hass.callApi("GET", "error_log");
+        if (!cancelled) setLogErrors(statusParseLog(text || ""));
+      } catch (err) {
+        console.warn("[aether status] error_log fetch failed:", err);
+      }
+      if (!cancelled) setLogLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [open, hass]);
+
+  // Group unavailable entities by device so 8 Sonos switches collapse to
+  // one "Move 2" row. Devices with >1 affected entity are expandable;
+  // singletons render inline like before.
+  const unavailableByDevice = React.useMemo(() => {
+    const groups = new Map();
+    for (const i of issues.unavailable) {
+      const key = statusDeviceKey(i.entity_id);
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, name: statusHumanizeKey(key), entities: [] };
+        groups.set(key, g);
+      }
+      g.entities.push(i);
+    }
+    return [...groups.values()].sort((a, b) => b.entities.length - a.entities.length);
+  }, [issues.unavailable]);
+  const [expandedDevice, setExpandedDevice] = React.useState(null);
+
   const installUpdate = async (entity_id) => {
     if (!hass?.callService) return;
     setPending((p) => ({ ...p, [entity_id]: Date.now() }));
@@ -986,11 +1099,73 @@ function StatusDialog({ open, onClose, issues, hass }) {
               <div className="status-group-head">
                 <strong>Unavailable</strong>
                 <span className="status-count">{issues.unavailable.length}</span>
+                {unavailableByDevice.length < issues.unavailable.length && (
+                  <span className="status-group-sub">
+                    across {unavailableByDevice.length} {unavailableByDevice.length === 1 ? "device" : "devices"}
+                  </span>
+                )}
               </div>
-              {issues.unavailable.map((i) => (
-                <div key={i.entity_id} className="status-row">
-                  <span className="status-name">{i.name}</span>
-                  <code className="status-entity">{i.entity_id}</code>
+              {unavailableByDevice.map((g) => {
+                if (g.entities.length === 1) {
+                  // Single-entity device: render inline like before.
+                  const i = g.entities[0];
+                  return (
+                    <div key={i.entity_id} className="status-row">
+                      <span className="status-name">{i.name}</span>
+                      <code className="status-entity">{i.entity_id}</code>
+                    </div>
+                  );
+                }
+                const isOpen = expandedDevice === g.key;
+                return (
+                  <div key={g.key} className="status-device-group">
+                    <button
+                      className="status-device-head"
+                      onClick={() => setExpandedDevice(isOpen ? null : g.key)}
+                    >
+                      <span className="status-device-name">{g.name}</span>
+                      <span className="status-device-count">
+                        {g.entities.length} {g.entities.length === 1 ? "entity" : "entities"}
+                      </span>
+                      <span className="status-device-chevron">{isOpen ? "▾" : "▸"}</span>
+                    </button>
+                    {isOpen && (
+                      <div className="status-device-entities">
+                        {g.entities.map((i) => (
+                          <div key={i.entity_id} className="status-row status-row-sub">
+                            <span className="status-name">{i.name}</span>
+                            <code className="status-entity">{i.entity_id}</code>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {logLoaded && logErrors.length > 0 && (
+            <div className="status-group">
+              <div className="status-group-head">
+                <strong>Recent errors</strong>
+                <span className="status-count">
+                  {logErrors.reduce((s, g) => s + g.count, 0)}
+                </span>
+                <span className="status-group-sub">from HA log</span>
+              </div>
+              {logErrors.slice(0, 6).map((g) => (
+                <div key={g.integration} className="status-error-row">
+                  <div className="status-error-head">
+                    <span className="status-error-integration">{g.integration}</span>
+                    <span className="status-error-count">{g.count}×</span>
+                  </div>
+                  {g.topEntity && (
+                    <div className="status-error-entity">
+                      Mostly involves <code>{g.topEntity.id}</code>
+                      <span className="status-error-entity-count"> · {g.topEntity.count}×</span>
+                    </div>
+                  )}
+                  <div className="status-error-message">{g.lastMessage}</div>
                 </div>
               ))}
             </div>
