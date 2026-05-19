@@ -36,8 +36,9 @@
   .hero-grid { grid-template-columns: 1fr; }
 }
 .hero-time {
-  font-size: 13px; color: var(--ink-2);
-  letter-spacing: .02em;
+  font-size: 18px; color: var(--ink-2);
+  letter-spacing: .01em;
+  font-weight: 400;
 }
 .hero-greet {
   font-size: 56px;
@@ -448,7 +449,7 @@
 .notes-new-btn {
   margin-left: auto;
   border: 0;
-  background: var(--accent-warm, #c97a17);
+  background: var(--accent, #2A6FDB);
   color: white;
   padding: 7px 14px; border-radius: 999px;
   font-size: 12px; font-weight: 600;
@@ -525,7 +526,7 @@
 .note-editor-delete:hover { background: rgba(216,58,58,.08); color: #c33; border-color: rgba(216,58,58,.3); }
 .note-editor-done {
   border: 0;
-  background: var(--accent-warm, #c97a17); color: white;
+  background: var(--accent, #2A6FDB); color: white;
   padding: 8px 18px; border-radius: 999px;
   font-size: 12px; font-weight: 600; cursor: pointer;
 }

@@ -644,7 +644,7 @@ const NOTE_BTN_SECONDARY = {
 };
 const NOTE_BTN_PRIMARY = {
   border: 0,
-  background: "var(--accent-warm, #c97a52)",
+  background: "var(--accent, #2A6FDB)",
   color: "white",
   padding: "8px 18px",
   borderRadius: 999,
