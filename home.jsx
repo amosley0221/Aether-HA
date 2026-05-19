@@ -692,19 +692,48 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
           border: "1px solid var(--hairline-2, rgba(15,28,46,.05))",
         }}
       >
-        <div className="note-editor-head">
+        <div
+          className="note-editor-head"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "18px 22px 14px",
+            borderBottom: "1px solid var(--hairline-2, rgba(15,28,46,.05))",
+          }}
+        >
           <input
             className="note-editor-title"
             placeholder="Untitled"
             value={title}
             onChange={onTitleChange}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: 0,
+              outline: "none",
+              background: "transparent",
+              fontSize: 22,
+              fontWeight: 500,
+              color: "var(--ink, #14181f)",
+            }}
           />
-          <div className="note-editor-head-actions">
+          <div className="note-editor-head-actions" style={{ display: "flex", gap: 8 }}>
             <button className="note-editor-delete" onClick={onDelete}>Delete</button>
             <button className="note-editor-done" onClick={onClose}>Done</button>
           </div>
         </div>
-        <div className="note-editor-toolbar">
+        <div
+          className="note-editor-toolbar"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+            padding: "10px 22px",
+            borderBottom: "1px solid var(--hairline-2, rgba(15,28,46,.05))",
+          }}
+        >
           <button className={"note-tool" + (mode === "text" ? " on" : "")} onClick={() => setMode("text")}>
             <span style={{ fontWeight: 700 }}>Aa</span>
           </button>
@@ -727,7 +756,16 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
             ✎ Draw
           </button>
         </div>
-        <div className="note-editor-body">
+        <div
+          className="note-editor-body"
+          style={{
+            flex: 1,
+            minHeight: 360,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
           {mode === "text" ? (
             <div
               ref={bodyRef}
@@ -736,6 +774,16 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
               suppressContentEditableWarning
               onInput={onBodyInput}
               data-placeholder="Begin your note…"
+              style={{
+                flex: 1,
+                minHeight: 360,
+                padding: "18px 24px",
+                fontSize: 15,
+                lineHeight: 1.6,
+                outline: "none",
+                overflowY: "auto",
+                color: "var(--ink, #14181f)",
+              }}
             />
           ) : (
             <NoteCanvas
