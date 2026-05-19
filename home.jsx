@@ -615,6 +615,44 @@ function relativeTime(ts) {
   return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+// Inline style objects for note-editor controls so they render with
+// Aether's warm theme even if home.css isn't loaded on the client.
+const NOTE_TOOL = {
+  border: "1px solid var(--hairline, rgba(15,28,46,.08))",
+  background: "var(--paper, #ffffff)",
+  color: "var(--ink, #14181f)",
+  padding: "5px 12px",
+  borderRadius: 999,
+  fontSize: 12,
+  cursor: "pointer",
+  minWidth: 32,
+  lineHeight: 1.2,
+};
+const NOTE_TOOL_ACTIVE = {
+  ...NOTE_TOOL,
+  background: "rgba(0,0,0,.08)",
+  borderColor: "rgba(0,0,0,.18)",
+};
+const NOTE_BTN_SECONDARY = {
+  border: "1px solid var(--hairline, rgba(15,28,46,.08))",
+  background: "var(--paper, #ffffff)",
+  color: "var(--ink, #14181f)",
+  padding: "8px 16px",
+  borderRadius: 999,
+  fontSize: 12,
+  cursor: "pointer",
+};
+const NOTE_BTN_PRIMARY = {
+  border: 0,
+  background: "var(--accent-warm, #c97a52)",
+  color: "white",
+  padding: "8px 18px",
+  borderRadius: 999,
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
 // ─── Note editor modal ──────────────────────────────────────────────────
 function NoteEditor({ note, onChange, onDelete, onClose }) {
   const open = !!note;
@@ -719,8 +757,16 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
             }}
           />
           <div className="note-editor-head-actions" style={{ display: "flex", gap: 8 }}>
-            <button className="note-editor-delete" onClick={onDelete}>Delete</button>
-            <button className="note-editor-done" onClick={onClose}>Done</button>
+            <button
+              className="note-editor-delete"
+              onClick={onDelete}
+              style={NOTE_BTN_SECONDARY}
+            >Delete</button>
+            <button
+              className="note-editor-done"
+              onClick={onClose}
+              style={NOTE_BTN_PRIMARY}
+            >Done</button>
           </div>
         </div>
         <div
@@ -734,24 +780,28 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
             borderBottom: "1px solid var(--hairline-2, rgba(15,28,46,.05))",
           }}
         >
-          <button className={"note-tool" + (mode === "text" ? " on" : "")} onClick={() => setMode("text")}>
+          <button
+            className={"note-tool" + (mode === "text" ? " on" : "")}
+            onClick={() => setMode("text")}
+            style={mode === "text" ? NOTE_TOOL_ACTIVE : NOTE_TOOL}
+          >
             <span style={{ fontWeight: 700 }}>Aa</span>
           </button>
           {mode === "text" && (
             <>
-              <button className="note-tool" onClick={() => exec("bold")}><b>B</b></button>
-              <button className="note-tool" onClick={() => exec("italic")}><i>I</i></button>
-              <button className="note-tool" onClick={() => exec("underline")}><u>U</u></button>
-              <button className="note-tool" onClick={() => exec("insertUnorderedList")}>• List</button>
-              <button className="note-tool" onClick={() => exec("insertOrderedList")}>1. List</button>
-              <button className="note-tool" onClick={() => exec("formatBlock", "H2")}>H</button>
-              <button className="note-tool" onClick={() => exec("formatBlock", "BLOCKQUOTE")}>"</button>
+              <button className="note-tool" onClick={() => exec("bold")} style={NOTE_TOOL}><b>B</b></button>
+              <button className="note-tool" onClick={() => exec("italic")} style={NOTE_TOOL}><i>I</i></button>
+              <button className="note-tool" onClick={() => exec("underline")} style={NOTE_TOOL}><u>U</u></button>
+              <button className="note-tool" onClick={() => exec("insertUnorderedList")} style={NOTE_TOOL}>• List</button>
+              <button className="note-tool" onClick={() => exec("insertOrderedList")} style={NOTE_TOOL}>1. List</button>
+              <button className="note-tool" onClick={() => exec("formatBlock", "H2")} style={NOTE_TOOL}>H</button>
+              <button className="note-tool" onClick={() => exec("formatBlock", "BLOCKQUOTE")} style={NOTE_TOOL}>"</button>
             </>
           )}
           <button
             className={"note-tool note-draw-toggle" + (mode === "draw" ? " on" : "")}
             onClick={() => setMode("draw")}
-            style={{ marginLeft: "auto" }}
+            style={{ ...(mode === "draw" ? NOTE_TOOL_ACTIVE : NOTE_TOOL), marginLeft: "auto" }}
           >
             ✎ Draw
           </button>
