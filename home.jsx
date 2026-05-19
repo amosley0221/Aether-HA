@@ -667,10 +667,31 @@ function NoteEditor({ note, onChange, onDelete, onClose }) {
         position: "fixed",
         top: 0, left: 0, right: 0, bottom: 0,
         width: "auto", height: "auto",
+        background: "rgba(15, 28, 46, 0.45)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        display: "grid",
+        placeItems: "center",
+        padding: "32px 20px",
         zIndex: 99999,
       }}
     >
-      <div className="modal note-editor-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal note-editor-modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--paper, #ffffff)",
+          color: "var(--ink, #14181f)",
+          borderRadius: 22,
+          width: "min(800px, 92vw)",
+          maxHeight: "86vh",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          boxShadow: "0 1px 2px rgba(0,0,0,.05), 0 20px 60px rgba(20,18,14,.10)",
+          border: "1px solid var(--hairline-2, rgba(15,28,46,.05))",
+        }}
+      >
         <div className="note-editor-head">
           <input
             className="note-editor-title"
@@ -1073,10 +1094,31 @@ function SportsAllModal({ open, onClose, leagues, byLeague }) {
         position: "fixed",
         top: 0, left: 0, right: 0, bottom: 0,
         width: "auto", height: "auto",
+        background: "rgba(15, 28, 46, 0.45)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        display: "grid",
+        placeItems: "center",
+        padding: "32px 20px",
         zIndex: 99999,
       }}
     >
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal wide"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--paper, #ffffff)",
+          color: "var(--ink, #14181f)",
+          borderRadius: 22,
+          width: "min(760px, 92vw)",
+          maxHeight: "86vh",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          boxShadow: "0 1px 2px rgba(0,0,0,.05), 0 20px 60px rgba(20,18,14,.10)",
+          border: "1px solid var(--hairline-2, rgba(15,28,46,.05))",
+        }}
+      >
         <div className="modal-head">
           <h3>Today's scores</h3>
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
