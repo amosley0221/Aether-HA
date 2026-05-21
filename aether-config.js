@@ -26,7 +26,7 @@ const AETHER_CONFIG = {
   voice: {
     enabled:         true,             // master toggle for any voice
     speakResponses:  true,             // read AI replies aloud
-    language:        "en-US",          // STT + TTS locale
+    language:        "en-GB",          // STT + TTS locale
     rate:            1.0,              // TTS playback speed (0.5–2.0)
     pitch:           1.0,              // TTS pitch (0–2)
     // Wake word: when set, the tablet listens continuously and opens the
@@ -36,7 +36,7 @@ const AETHER_CONFIG = {
     wakeWord:        "hey jarvis",     // e.g. "hey aether" or "hey jarvis"
     // Preferred TTS voice name fragment (e.g. "Google", "Samantha",
     // "Daniel"). If null, the system default is used.
-    preferredVoice:  null,
+    preferredVoice:  "Google UK English Female",
 
     // HA-side TTS fallback. Android WebView's Web Speech Synthesis is
     // unreliable; if it fails (no voices, autoplay-blocked, no engine),
