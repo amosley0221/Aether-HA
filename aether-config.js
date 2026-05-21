@@ -33,7 +33,7 @@ const AETHER_CONFIG = {
     // chat + starts voice input the moment it hears this phrase. Leave
     // null to require a button tap. Phrases work better than single
     // words — Web Speech tends to mis-fire on short triggers.
-    wakeWord:        null,             // e.g. "hey aether" or "hey jarvis"
+    wakeWord:        "hey jarvis",     // e.g. "hey aether" or "hey jarvis"
     // Preferred TTS voice name fragment (e.g. "Google", "Samantha",
     // "Daniel"). If null, the system default is used.
     preferredVoice:  null,
@@ -192,7 +192,7 @@ const AETHER_CONFIG = {
     model: "Model 3",
     color: "White",
     wheels: '19" Silver Sport',
-    model3d: null,                        // e.g. "/local/aether/tesla.glb"
+    model3d: "/local/aether/tesla.glb",   // e.g. "/local/aether/tesla.glb"
     image:   null,                        // e.g. "/local/aether/tesla.png"
     entities: {
       lock:                  "lock.tone_lock",
