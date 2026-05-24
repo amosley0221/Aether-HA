@@ -671,10 +671,45 @@
   .track-row .thumb { width: 36px; height: 36px; }
 }
 
+/* ─── Now Playing expand icon (top-right of np-card) ───────────────────── */
+.np-card { position: relative; }
+.np-expand-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--paper-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+  transition: all .15s;
+  z-index: 2;
+}
+.np-expand-btn:hover {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
+}
+.np-expand-btn:active { transform: scale(.92); }
+
 /* ─── Now Playing fullscreen ────────────────────────────────────────────── */
+/* While active, hide the app's brandbar + chat FAB so the player owns the
+   screen. Class is added to <aether-panel>. */
+aether-panel.np-fs-active .brandbar,
+aether-panel.np-fs-active .chat-fab,
+.np-fs-active .brandbar,
+.np-fs-active .chat-fab {
+  display: none !important;
+}
+
 .np-fullscreen {
-  position: fixed;
-  inset: 0;
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 100vh;
   z-index: 1000;
   overflow: hidden;
   animation: np-fs-fade .22s ease-out;
@@ -686,16 +721,18 @@
 }
 .np-fs-backdrop {
   position: absolute;
-  inset: -60px;
-  filter: blur(70px) saturate(1.3);
-  opacity: .55;
-  transform: scale(1.15);
+  inset: -80px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(80px) saturate(1.35);
+  opacity: .6;
+  transform: scale(1.2);
 }
 .np-fs-dim {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(120% 80% at 50% 0%, rgba(8,12,20,.35) 0%, rgba(8,12,20,.85) 60%, rgba(8,12,20,.95) 100%);
+    radial-gradient(140% 100% at 50% 0%, rgba(8,12,20,.35) 0%, rgba(8,12,20,.78) 60%, rgba(8,12,20,.92) 100%);
 }
 .np-fs-close {
   position: absolute;
@@ -721,14 +758,36 @@
   z-index: 5;
   height: 100%;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  padding: 56px 32px 40px;
+  gap: clamp(28px, 5vw, 64px);
+  padding: 32px clamp(28px, 6vw, 80px);
   color: white;
-  gap: 22px;
-  max-width: 560px;
+  max-width: 1400px;
   margin: 0 auto;
+}
+.np-fs-art {
+  flex: 0 0 auto;
+  width: min(62vh, 42vw, 520px);
+  aspect-ratio: 1;
+  border-radius: 24px;
+  background: linear-gradient(160deg, #6aa9d8 0%, #2f6db3 55%, #1e3f7a 100%);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 40px 100px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+  display: grid;
+  place-items: center;
+  color: rgba(255,255,255,.35);
+}
+.np-fs-art-fallback { display: grid; place-items: center; }
+.np-fs-side {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 .np-fs-room {
   display: flex;
@@ -739,29 +798,12 @@
   text-transform: uppercase;
   color: rgba(255,255,255,.75);
 }
-.np-fs-art {
-  width: min(56vh, 80vw, 440px);
-  aspect-ratio: 1;
-  border-radius: 20px;
-  background: linear-gradient(160deg, #6aa9d8 0%, #2f6db3 55%, #1e3f7a 100%);
-  background-size: cover;
-  background-position: center;
-  box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
-  display: grid;
-  place-items: center;
-  color: rgba(255,255,255,.35);
-}
-.np-fs-art-fallback { display: grid; place-items: center; }
-.np-fs-meta {
-  text-align: center;
-  width: 100%;
-  max-width: 480px;
-}
+.np-fs-meta { min-width: 0; }
 .np-fs-track {
-  font-size: 26px;
+  font-size: clamp(28px, 3.6vw, 44px);
   font-weight: 600;
   letter-spacing: -.02em;
-  line-height: 1.2;
+  line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -769,20 +811,17 @@
   -webkit-box-orient: vertical;
 }
 .np-fs-artist {
-  font-size: 15px;
-  color: rgba(255,255,255,.82);
-  margin-top: 6px;
+  font-size: clamp(15px, 1.4vw, 18px);
+  color: rgba(255,255,255,.85);
+  margin-top: 8px;
 }
 .np-fs-album {
-  font-size: 12px;
+  font-size: 13px;
   color: rgba(255,255,255,.55);
-  margin-top: 3px;
+  margin-top: 4px;
   letter-spacing: .02em;
 }
-.np-fs-progress {
-  width: 100%;
-  max-width: 440px;
-}
+.np-fs-progress { width: 100%; }
 .np-fs-bar {
   height: 5px;
   background: rgba(255,255,255,.18);
@@ -807,7 +846,7 @@
 .np-fs-transport {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 20px;
 }
 .np-fs-transport .t-icon {
   color: rgba(255,255,255,.88);
@@ -832,7 +871,7 @@
   align-items: center;
   gap: 14px;
   width: 100%;
-  max-width: 340px;
+  max-width: 380px;
   color: rgba(255,255,255,.7);
 }
 .np-fs-vol-pct {
@@ -856,17 +895,30 @@
   width: 14px; height: 14px; border-radius: 999px;
 }
 
+/* Portrait / narrow: stack art on top, side panel below */
+@media (max-width: 820px), (orientation: portrait) {
+  .np-fs-inner {
+    flex-direction: column;
+    justify-content: center;
+    padding: 56px 24px 32px;
+    gap: 24px;
+  }
+  .np-fs-art { width: min(60vh, 78vw, 380px); }
+  .np-fs-side { align-items: center; text-align: center; }
+  .np-fs-meta { text-align: center; }
+  .np-fs-volume { max-width: 320px; }
+}
 @media (max-width: 720px) {
-  .np-fs-inner { padding: 48px 20px 28px; gap: 18px; }
   .np-fs-close { top: 16px; right: 16px; width: 44px; height: 44px; }
   .np-fs-track { font-size: 22px; }
   .np-fs-artist { font-size: 14px; }
-  .np-fs-transport { gap: 16px; }
+  .np-fs-transport { gap: 14px; }
   .np-fs-transport .t-icon { width: 44px; height: 44px; }
   .np-fs-transport .t-play { width: 64px; height: 64px; }
 }
-@media (max-height: 600px) {
-  .np-fs-inner { padding: 44px 24px 20px; gap: 14px; }
-  .np-fs-art { width: min(44vh, 70vw, 320px); }
-  .np-fs-track { font-size: 20px; }
+@media (max-height: 560px) and (orientation: landscape) {
+  .np-fs-inner { padding: 24px 32px; gap: 32px; }
+  .np-fs-art { width: min(70vh, 38vw, 360px); }
+  .np-fs-side { gap: 16px; }
+  .np-fs-track { font-size: 24px; }
 }

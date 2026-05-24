@@ -515,6 +515,14 @@ function MusicPage() {
       <div className="music-grid">
         {/* Now Playing */}
         <div className="np-card">
+          <button
+            className="np-expand-btn"
+            onClick={() => setNpFullscreen(true)}
+            title="Expand to full screen"
+            aria-label="Expand Now Playing"
+          >
+            <Icon name="expand" size={16} />
+          </button>
           <div className="np-top">
             <div
               className="np-art"
@@ -572,13 +580,6 @@ function MusicPage() {
                     <Icon name="more" /> {primary?.onTvOrLineIn ? primary.currentSource : "Source"}
                   </button>
                 )}
-                <button
-                  className="action"
-                  onClick={() => setNpFullscreen(true)}
-                  title="Expand to full screen"
-                >
-                  <Icon name="expand" /> Expand
-                </button>
               </div>
             </div>
           </div>
@@ -735,21 +736,27 @@ function MusicPage() {
 
 // ─── Now Playing fullscreen overlay ───────────────────────────────────────
 // Full-viewport "lock screen" style player. Always renders the currently
-// selected primary room — switching rooms requires exiting fullscreen first.
-// Dismissed via the chev-down button (top-right) or the Escape key.
+// selected primary room. Album art on the left, metadata + controls on the
+// right. While open, the app's brandbar + chat FAB are hidden (via a class
+// on the panel host) so the player owns the screen. Dismissed via the
+// chev-down button (top-right) or the Escape key.
 function NowPlayingFullscreen({
   room, primaryCtrl, playing, progress, duration,
   onClose, onToggle, onNext, onPrev, onShuffle, onRepeat, onSeek, onVolume,
 }) {
+  const scrollTop = useModalAnchor(true);
+
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
-    // Lock body scroll while fullscreen is active
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    // Hide app chrome (brandbar + chat FAB) while fullscreen is up. The
+    // panel host is the highest ancestor we can reliably reach from inside
+    // the React tree.
+    const host = document.querySelector("aether-panel") || document.documentElement;
+    host.classList.add("np-fs-active");
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      host.classList.remove("np-fs-active");
     };
   }, [onClose]);
 
@@ -766,10 +773,17 @@ function NowPlayingFullscreen({
         : room.playing ? "Playing"
         : room.state === "unavailable" ? "Offline"
         : "Nothing playing");
+  const c1 = (room.color && room.color[0]) || "#4a8dd8";
+  const c2 = (room.color && room.color[1]) || "#1e3f7a";
 
   return (
-    <div className="np-fullscreen">
-      {art && <div className="np-fs-backdrop" style={artStyle} />}
+    <div className="np-fullscreen" style={{ top: scrollTop }}>
+      {art
+        ? <div className="np-fs-backdrop" style={artStyle} />
+        : <div className="np-fs-backdrop" style={{
+            background: `radial-gradient(120% 100% at 30% 30%, ${c1} 0%, ${c2} 60%, #0a0e16 100%)`,
+          }} />
+      }
       <div className="np-fs-dim" />
 
       <button
@@ -782,11 +796,6 @@ function NowPlayingFullscreen({
       </button>
 
       <div className="np-fs-inner">
-        <div className="np-fs-room">
-          <Avatar colors={room.color || ["#4a8dd8","#1e3f7a"]} size={18} />
-          <span>{room.name}</span>
-        </div>
-
         <div className="np-fs-art" style={artStyle}>
           {!art && (
             <div className="np-fs-art-fallback">
@@ -795,68 +804,75 @@ function NowPlayingFullscreen({
           )}
         </div>
 
-        <div className="np-fs-meta">
-          <div className="np-fs-track">{trackText}</div>
-          {room.artist && <div className="np-fs-artist">{room.artist}</div>}
-          {room.album  && <div className="np-fs-album">{room.album}</div>}
-        </div>
-
-        <div className="np-fs-progress">
-          <div
-            className="np-fs-bar"
-            onClick={(e) => {
-              if (!duration) return;
-              const r = e.currentTarget.getBoundingClientRect();
-              onSeek(Math.round(((e.clientX - r.left) / r.width) * duration));
-            }}
-          >
-            <div className="np-fs-bar-fill" style={{ width: `${duration ? (progress/duration)*100 : 0}%` }} />
+        <div className="np-fs-side">
+          <div className="np-fs-room">
+            <Avatar colors={room.color || ["#4a8dd8","#1e3f7a"]} size={18} />
+            <span>{room.name}</span>
           </div>
-          <div className="np-fs-times">
-            <span>{fmt(progress)}</span>
-            <span>{duration ? `−${fmt(duration - progress)}` : ""}</span>
+
+          <div className="np-fs-meta">
+            <div className="np-fs-track">{trackText}</div>
+            {room.artist && <div className="np-fs-artist">{room.artist}</div>}
+            {room.album  && <div className="np-fs-album">{room.album}</div>}
           </div>
-        </div>
 
-        <div className="np-fs-transport">
-          <button
-            className={"t-icon" + (primaryCtrl?.attributes?.shuffle ? " on" : "")}
-            title="Shuffle"
-            onClick={onShuffle}
-          >
-            <Icon name="shuffle" size={22} />
-          </button>
-          <button className="t-icon" title="Previous" onClick={onPrev}>
-            <Icon name="prev" size={28} />
-          </button>
-          <button
-            className="t-play np-fs-play"
-            onClick={onToggle}
-            title={playing ? "Pause" : "Play"}
-          >
-            <Icon name={playing ? "pause" : "play"} size={32} />
-          </button>
-          <button className="t-icon" title="Next" onClick={onNext}>
-            <Icon name="next" size={28} />
-          </button>
-          <button
-            className={"t-icon" + (primaryCtrl?.attributes?.repeat && primaryCtrl.attributes.repeat !== "off" ? " on" : "")}
-            title={`Repeat (${primaryCtrl?.attributes?.repeat || "off"})`}
-            onClick={onRepeat}
-          >
-            <Icon name="repeat" size={22} />
-          </button>
-        </div>
+          <div className="np-fs-progress">
+            <div
+              className="np-fs-bar"
+              onClick={(e) => {
+                if (!duration) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                onSeek(Math.round(((e.clientX - r.left) / r.width) * duration));
+              }}
+            >
+              <div className="np-fs-bar-fill" style={{ width: `${duration ? (progress/duration)*100 : 0}%` }} />
+            </div>
+            <div className="np-fs-times">
+              <span>{fmt(progress)}</span>
+              <span>{duration ? `−${fmt(duration - progress)}` : ""}</span>
+            </div>
+          </div>
 
-        <div className="np-fs-volume">
-          <Icon name="volume" size={18} />
-          <input
-            className="range np-fs-range"
-            type="range" min="0" max="100"
-            value={room.volume || 0}
-            onChange={(e) => onVolume(Number(e.target.value))}
-          />
-          <span className="np-fs-vol-pct">{room.volume || 0}</span>
+          <div className="np-fs-transport">
+            <button
+              className={"t-icon" + (primaryCtrl?.attributes?.shuffle ? " on" : "")}
+              title="Shuffle"
+              onClick={onShuffle}
+            >
+              <Icon name="shuffle" size={22} />
+            </button>
+            <button className="t-icon" title="Previous" onClick={onPrev}>
+              <Icon name="prev" size={28} />
+            </button>
+            <button
+              className="t-play np-fs-play"
+              onClick={onToggle}
+              title={playing ? "Pause" : "Play"}
+            >
+              <Icon name={playing ? "pause" : "play"} size={32} />
+            </button>
+            <button className="t-icon" title="Next" onClick={onNext}>
+              <Icon name="next" size={28} />
+            </button>
+            <button
+              className={"t-icon" + (primaryCtrl?.attributes?.repeat && primaryCtrl.attributes.repeat !== "off" ? " on" : "")}
+              title={`Repeat (${primaryCtrl?.attributes?.repeat || "off"})`}
+              onClick={onRepeat}
+            >
+              <Icon name="repeat" size={22} />
+            </button>
+          </div>
+
+          <div className="np-fs-volume">
+            <Icon name="volume" size={18} />
+            <input
+              className="range np-fs-range"
+              type="range" min="0" max="100"
+              value={room.volume || 0}
+              onChange={(e) => onVolume(Number(e.target.value))}
+            />
+            <span className="np-fs-vol-pct">{room.volume || 0}</span>
+          </div>
         </div>
       </div>
     </div>
