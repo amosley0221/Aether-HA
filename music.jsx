@@ -44,6 +44,7 @@ function MusicPage() {
   const [search, setSearch]   = React.useState("");
   const [eqOpen, setEqOpen]   = React.useState(false);
   const [sourceOpen, setSourceOpen] = React.useState(false);
+  const [npFullscreen, setNpFullscreen] = React.useState(false);
 
   const railRef        = React.useRef(null);
   const pointerStart   = React.useRef(null);   // {id, x, y}
@@ -571,6 +572,13 @@ function MusicPage() {
                     <Icon name="more" /> {primary?.onTvOrLineIn ? primary.currentSource : "Source"}
                   </button>
                 )}
+                <button
+                  className="action"
+                  onClick={() => setNpFullscreen(true)}
+                  title="Expand to full screen"
+                >
+                  <Icon name="expand" /> Expand
+                </button>
               </div>
             </div>
           </div>
@@ -704,6 +712,153 @@ function MusicPage() {
         room={primary}
         hass={hass}
       />
+      {npFullscreen && (
+        <NowPlayingFullscreen
+          room={primary}
+          primaryCtrl={primaryCtrl}
+          playing={playingPrimary}
+          progress={progress}
+          duration={duration}
+          onClose={() => setNpFullscreen(false)}
+          onToggle={togglePrimary}
+          onNext={skipNext}
+          onPrev={skipPrev}
+          onShuffle={toggleShuffle}
+          onRepeat={toggleRepeat}
+          onSeek={seek}
+          onVolume={setVol}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Now Playing fullscreen overlay ───────────────────────────────────────
+// Full-viewport "lock screen" style player. Always renders the currently
+// selected primary room — switching rooms requires exiting fullscreen first.
+// Dismissed via the chev-down button (top-right) or the Escape key.
+function NowPlayingFullscreen({
+  room, primaryCtrl, playing, progress, duration,
+  onClose, onToggle, onNext, onPrev, onShuffle, onRepeat, onSeek, onVolume,
+}) {
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    // Lock body scroll while fullscreen is active
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  if (!room) return null;
+
+  const art = room.art;
+  const artStyle = art ? {
+    backgroundImage: `url('${art}')`,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  } : undefined;
+  const trackText = room.track
+    || (room.onTvOrLineIn ? room.currentSource
+        : room.playing ? "Playing"
+        : room.state === "unavailable" ? "Offline"
+        : "Nothing playing");
+
+  return (
+    <div className="np-fullscreen">
+      {art && <div className="np-fs-backdrop" style={artStyle} />}
+      <div className="np-fs-dim" />
+
+      <button
+        className="np-fs-close"
+        onClick={onClose}
+        title="Exit full screen (Esc)"
+        aria-label="Exit full screen"
+      >
+        <Icon name="chevDown" size={26} />
+      </button>
+
+      <div className="np-fs-inner">
+        <div className="np-fs-room">
+          <Avatar colors={room.color || ["#4a8dd8","#1e3f7a"]} size={18} />
+          <span>{room.name}</span>
+        </div>
+
+        <div className="np-fs-art" style={artStyle}>
+          {!art && (
+            <div className="np-fs-art-fallback">
+              <Icon name="music" size={96} />
+            </div>
+          )}
+        </div>
+
+        <div className="np-fs-meta">
+          <div className="np-fs-track">{trackText}</div>
+          {room.artist && <div className="np-fs-artist">{room.artist}</div>}
+          {room.album  && <div className="np-fs-album">{room.album}</div>}
+        </div>
+
+        <div className="np-fs-progress">
+          <div
+            className="np-fs-bar"
+            onClick={(e) => {
+              if (!duration) return;
+              const r = e.currentTarget.getBoundingClientRect();
+              onSeek(Math.round(((e.clientX - r.left) / r.width) * duration));
+            }}
+          >
+            <div className="np-fs-bar-fill" style={{ width: `${duration ? (progress/duration)*100 : 0}%` }} />
+          </div>
+          <div className="np-fs-times">
+            <span>{fmt(progress)}</span>
+            <span>{duration ? `−${fmt(duration - progress)}` : ""}</span>
+          </div>
+        </div>
+
+        <div className="np-fs-transport">
+          <button
+            className={"t-icon" + (primaryCtrl?.attributes?.shuffle ? " on" : "")}
+            title="Shuffle"
+            onClick={onShuffle}
+          >
+            <Icon name="shuffle" size={22} />
+          </button>
+          <button className="t-icon" title="Previous" onClick={onPrev}>
+            <Icon name="prev" size={28} />
+          </button>
+          <button
+            className="t-play np-fs-play"
+            onClick={onToggle}
+            title={playing ? "Pause" : "Play"}
+          >
+            <Icon name={playing ? "pause" : "play"} size={32} />
+          </button>
+          <button className="t-icon" title="Next" onClick={onNext}>
+            <Icon name="next" size={28} />
+          </button>
+          <button
+            className={"t-icon" + (primaryCtrl?.attributes?.repeat && primaryCtrl.attributes.repeat !== "off" ? " on" : "")}
+            title={`Repeat (${primaryCtrl?.attributes?.repeat || "off"})`}
+            onClick={onRepeat}
+          >
+            <Icon name="repeat" size={22} />
+          </button>
+        </div>
+
+        <div className="np-fs-volume">
+          <Icon name="volume" size={18} />
+          <input
+            className="range np-fs-range"
+            type="range" min="0" max="100"
+            value={room.volume || 0}
+            onChange={(e) => onVolume(Number(e.target.value))}
+          />
+          <span className="np-fs-vol-pct">{room.volume || 0}</span>
+        </div>
+      </div>
     </div>
   );
 }
