@@ -697,11 +697,14 @@
 
 /* ─── Now Playing fullscreen ────────────────────────────────────────────── */
 /* While active, hide the app's brandbar + chat FAB so the player owns the
-   screen. Class is added to <aether-panel>. */
-aether-panel.np-fs-active .brandbar,
-aether-panel.np-fs-active .chat-fab,
+   screen. Class is added to #aether-mount (the div the React app renders
+   into). Both selectors below match — the descendant one covers our
+   typical case, the direct one covers .brandbar / .chat-fab being a
+   direct child of the host. */
 .np-fs-active .brandbar,
-.np-fs-active .chat-fab {
+.np-fs-active .chat-fab,
+.np-fs-active > .brandbar,
+.np-fs-active > .chat-fab {
   display: none !important;
 }
 

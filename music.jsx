@@ -750,9 +750,15 @@ function NowPlayingFullscreen({
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     // Hide app chrome (brandbar + chat FAB) while fullscreen is up. The
-    // panel host is the highest ancestor we can reliably reach from inside
-    // the React tree.
-    const host = document.querySelector("aether-panel") || document.documentElement;
+    // class has to live on an element inside the same DOM tree as our
+    // stylesheet, otherwise CSS rules can't see it. aether-mount is the
+    // div the React app is rendered into — guaranteed to be a sibling of
+    // the brandbar/chat-fab in the same tree as music.css. Falls back to
+    // the panel host or documentElement (latter won't actually work
+    // across HA's shadow DOM, but is harmless).
+    const host = window.__aetherMount
+      || document.querySelector("aether-panel")
+      || document.documentElement;
     host.classList.add("np-fs-active");
     return () => {
       window.removeEventListener("keydown", onKey);
