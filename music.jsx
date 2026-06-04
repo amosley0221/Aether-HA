@@ -55,14 +55,6 @@ function MusicPage() {
   // bare) mirrors externally-controlled playback. The rail reads from
   // whichever sibling is most active; services always target mediaPlayer.
   const liveRooms = React.useMemo(() => {
-    const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
-    // When two entities tie on playback state, prefer whichever updated its
-    // position more recently. Stops MA wrapper from showing stale tracks
-    // after Sonos auto-advances the queue (MA doesn't always get the update).
-    const updatedAt = (e) => {
-      const t = e?.attributes?.media_position_updated_at;
-      return t ? new Date(t).getTime() : 0;
-    };
     const states = hass?.states || {};
     const mapped = cfg.rooms.map(room => {
       // Auto-resolve the MA wrapper if the configured entity isn't search-capable
@@ -71,16 +63,16 @@ function MusicPage() {
         || (resolvedCtrlId !== room.mediaPlayer ? room.mediaPlayer : resolvedCtrlId.replace(/_\d+$/, ""));
       const ctrl    = states[resolvedCtrlId];
       const display = displayId && displayId !== resolvedCtrlId ? states[displayId] : null;
-      const active  = [ctrl, display].filter(Boolean).sort((a, b) => {
-        const ds = score(a.state) - score(b.state);
-        if (ds !== 0) return ds;
-        return updatedAt(b) - updatedAt(a); // newer position update wins ties
-      })[0] || ctrl || display;
-      // Transport (play/pause/next/prev/seek/volume) targets the bare
-      // display entity — MA wrappers go out of sync with Sonos when the
-      // hardware auto-advances, and routing play through a desync'd MA
-      // wrapper silently fails. Library search + play_media still go to
-      // the MA wrapper (entityId) since that's what supports search.
+      // The bare Sonos integration entity tracks the actual hardware state.
+      // The MA wrapper is a layer that frequently desyncs (still reports
+      // "playing" with stale track metadata after the queue auto-advances,
+      // or when the user pauses from elsewhere). Treat the bare entity as
+      // ground truth for state + display when it exists, and only fall
+      // back to ctrl when there's no Sonos integration counterpart.
+      const active      = display || ctrl;
+      // Transport (play/pause/next/prev/seek/volume) targets the same
+      // ground-truth bare entity. Library search + play_media still go
+      // to the MA wrapper (entityId) since that's what supports search.
       const transportId = displayId || resolvedCtrlId;
       const a = active?.attributes || {};
       const groupMembers = a.group_members || ctrl?.attributes?.group_members || [];
@@ -106,8 +98,8 @@ function MusicPage() {
         artist:   a.media_artist || "",
         album:    a.media_album_name || "",
         art:      a.entity_picture || null,
-        volume:   Math.round(((ctrl?.attributes?.volume_level ?? a.volume_level) ?? 0) * 100),
-        muted:    !!(ctrl?.attributes?.is_volume_muted ?? a.is_volume_muted),
+        volume:   Math.round(((a.volume_level ?? ctrl?.attributes?.volume_level) ?? 0) * 100),
+        muted:    !!(a.is_volume_muted ?? ctrl?.attributes?.is_volume_muted),
         groupMembers,
         groupSize: groupMembers.length,
         sourceList,
@@ -115,6 +107,8 @@ function MusicPage() {
         onTvOrLineIn,
       };
     });
+    // Sort rooms by playback state so the active ones surface first
+    const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
     return mapped.sort((a, b) => score(a.state) - score(b.state));
   }, [hass, cfg.rooms]);
 
