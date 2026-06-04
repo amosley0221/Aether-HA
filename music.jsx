@@ -112,16 +112,21 @@ function MusicPage() {
     return mapped.sort((a, b) => score(a.state) - score(b.state));
   }, [hass, cfg.rooms]);
 
-  // Auto-primary: pick the first playing room. Once the user explicitly
-  // selects a room, lock that choice — don't fight live state.
+  // Auto-primary: pick the first playing room on mount. Once a room has
+  // been the primary, don't bounce away from it just because state changed
+  // (e.g. user pauses → "playing" filter no longer matches → previously
+  // would jump to a different room). Only re-pick if the current primary
+  // is genuinely gone (unavailable) or has no entity at all.
   React.useEffect(() => {
     if (userSelectedPrimary) return;
+    const current = liveRooms.find(r => r.id === primaryId);
+    if (current && current.entity && current.state !== "unavailable") return;
     const firstPlaying  = liveRooms.find(r => r.playing);
     const firstWithData = liveRooms.find(r => r.entity);
     const configured    = cfg.rooms.find(r => r.primary);
     const pick = firstPlaying || firstWithData || configured || cfg.rooms[0];
     if (pick && pick.id !== primaryId) setPrimaryId(pick.id);
-  }, [liveRooms, userSelectedPrimary, cfg.rooms]);
+  }, [liveRooms, userSelectedPrimary, cfg.rooms, primaryId]);
 
   const primary        = liveRooms.find(r => r.id === primaryId) || liveRooms[0];
   const primaryEntity  = primary?.entity;
@@ -154,41 +159,67 @@ function MusicPage() {
   ]);
 
   // ─── Service helpers ─────────────────────────────────────────────────────
-  // Transport (play/pause/next/prev/seek/volume/shuffle/repeat) goes to the
-  // bare Sonos entity (transportId) because MA wrappers desync from the
-  // hardware on auto-advance. Search + play_media still hit the MA wrapper
-  // (entityId) — only MA implements those.
+  // Transport commands go to BOTH the MA wrapper (entityId) and the bare
+  // Sonos entity (transportId) so whichever is the live driver responds —
+  // MA owns the queue state for MA-sourced playback (so resume picks up at
+  // the right track + position), while the bare Sonos entity is what the
+  // hardware actually mirrors. Sending to both is a no-op for the redundant
+  // call but covers all desync modes. Library search + play_media still
+  // hit only the MA wrapper since that's the only entity that implements
+  // those services.
   const svc = (service, data) => callService(hass, service, data);
-  const togglePrimary = () => primary?.transportId && svc(
-    playingPrimary ? "media_player.media_pause" : "media_player.media_play",
-    { entity_id: primary.transportId }
-  );
-  const skipNext  = () => primary?.transportId && svc("media_player.media_next_track",     { entity_id: primary.transportId });
-  const skipPrev  = () => primary?.transportId && svc("media_player.media_previous_track", { entity_id: primary.transportId });
-  const toggleShuffle = () => primary?.transportId && svc("media_player.shuffle_set", {
-    entity_id: primary.transportId,
-    shuffle: !(primary?.entity?.attributes?.shuffle ?? primaryCtrl?.attributes?.shuffle),
-  });
+  // Lock the primary the moment the user interacts with it — otherwise
+  // pausing makes "first playing room" rule pick a different room and the
+  // UI flips away from where the user was working.
+  const lockPrimary = () => { if (!userSelectedPrimary) setUserSelectedPrimary(true); };
+  // Return [MA wrapper id, bare Sonos id] deduped — used by every transport
+  // call to fan the command out to whichever sibling is the live driver.
+  const transportIds = (room) => {
+    const ids = [room?.entityId, room?.transportId].filter(Boolean);
+    return [...new Set(ids)];
+  };
+  const fanout = (room, service, data = {}) => {
+    transportIds(room).forEach(id => svc(service, { ...data, entity_id: id }));
+  };
+  const togglePrimary = () => {
+    if (!primary) return;
+    lockPrimary();
+    fanout(primary, playingPrimary ? "media_player.media_pause" : "media_player.media_play");
+  };
+  const skipNext  = () => { if (primary) { lockPrimary(); fanout(primary, "media_player.media_next_track"); } };
+  const skipPrev  = () => { if (primary) { lockPrimary(); fanout(primary, "media_player.media_previous_track"); } };
+  const toggleShuffle = () => {
+    if (!primary) return;
+    lockPrimary();
+    fanout(primary, "media_player.shuffle_set", {
+      shuffle: !(primary?.entity?.attributes?.shuffle ?? primaryCtrl?.attributes?.shuffle),
+    });
+  };
   const toggleRepeat = () => {
-    if (!primary?.transportId) return;
+    if (!primary) return;
+    lockPrimary();
     const cur = primary?.entity?.attributes?.repeat ?? primaryCtrl?.attributes?.repeat ?? "off";
     const next = cur === "off" ? "all" : cur === "all" ? "one" : "off";
-    svc("media_player.repeat_set", { entity_id: primary.transportId, repeat: next });
+    fanout(primary, "media_player.repeat_set", { repeat: next });
   };
-  const setVol = (v) => primary?.transportId && svc("media_player.volume_set", {
-    entity_id: primary.transportId, volume_level: v / 100,
-  });
-  const seek = (s) => primary?.transportId && svc("media_player.media_seek", {
-    entity_id: primary.transportId, seek_position: s,
-  });
+  const setVol = (v) => {
+    if (!primary) return;
+    lockPrimary();
+    fanout(primary, "media_player.volume_set", { volume_level: v / 100 });
+  };
+  const seek = (s) => {
+    if (!primary) return;
+    lockPrimary();
+    fanout(primary, "media_player.media_seek", { seek_position: s });
+  };
   const playMedia = (mediaContentId, mediaContentType) => primary?.entityId && svc("media_player.play_media", {
     entity_id: primary.entityId,
     media_content_id: mediaContentId,
     media_content_type: mediaContentType,
   });
   const togglePerRoom = (room) => {
-    if (!room.transportId) return;
-    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.transportId });
+    if (!room?.transportId && !room?.entityId) return;
+    fanout(room, room.playing ? "media_player.media_pause" : "media_player.media_play");
   };
 
   // ─── Drag-to-group ──────────────────────────────────────────────────────
