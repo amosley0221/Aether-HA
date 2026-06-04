@@ -56,6 +56,13 @@ function MusicPage() {
   // whichever sibling is most active; services always target mediaPlayer.
   const liveRooms = React.useMemo(() => {
     const score = (s) => s === "playing" ? 0 : s === "paused" ? 1 : s === "idle" ? 2 : 3;
+    // When two entities tie on playback state, prefer whichever updated its
+    // position more recently. Stops MA wrapper from showing stale tracks
+    // after Sonos auto-advances the queue (MA doesn't always get the update).
+    const updatedAt = (e) => {
+      const t = e?.attributes?.media_position_updated_at;
+      return t ? new Date(t).getTime() : 0;
+    };
     const states = hass?.states || {};
     const mapped = cfg.rooms.map(room => {
       // Auto-resolve the MA wrapper if the configured entity isn't search-capable
@@ -64,9 +71,17 @@ function MusicPage() {
         || (resolvedCtrlId !== room.mediaPlayer ? room.mediaPlayer : resolvedCtrlId.replace(/_\d+$/, ""));
       const ctrl    = states[resolvedCtrlId];
       const display = displayId && displayId !== resolvedCtrlId ? states[displayId] : null;
-      const active  = [ctrl, display].filter(Boolean).sort(
-        (a, b) => score(a.state) - score(b.state)
-      )[0] || ctrl || display;
+      const active  = [ctrl, display].filter(Boolean).sort((a, b) => {
+        const ds = score(a.state) - score(b.state);
+        if (ds !== 0) return ds;
+        return updatedAt(b) - updatedAt(a); // newer position update wins ties
+      })[0] || ctrl || display;
+      // Transport (play/pause/next/prev/seek/volume) targets the bare
+      // display entity — MA wrappers go out of sync with Sonos when the
+      // hardware auto-advances, and routing play through a desync'd MA
+      // wrapper silently fails. Library search + play_media still go to
+      // the MA wrapper (entityId) since that's what supports search.
+      const transportId = displayId || resolvedCtrlId;
       const a = active?.attributes || {};
       const groupMembers = a.group_members || ctrl?.attributes?.group_members || [];
       // Sonos source attributes (live on the bare integration entity). When
@@ -81,7 +96,8 @@ function MusicPage() {
         entity:   active,
         ctrl,
         display,
-        entityId: resolvedCtrlId,
+        entityId:    resolvedCtrlId,   // MA wrapper — for search / play_media
+        transportId,                   // bare Sonos — for transport control
         displayId,
         state:    active?.state || "unavailable",
         playing:  active?.state === "playing" || onTvOrLineIn,
@@ -143,29 +159,33 @@ function MusicPage() {
     duration,
   ]);
 
-  // ─── Service helpers (always target the MA wrapper) ──────────────────────
+  // ─── Service helpers ─────────────────────────────────────────────────────
+  // Transport (play/pause/next/prev/seek/volume/shuffle/repeat) goes to the
+  // bare Sonos entity (transportId) because MA wrappers desync from the
+  // hardware on auto-advance. Search + play_media still hit the MA wrapper
+  // (entityId) — only MA implements those.
   const svc = (service, data) => callService(hass, service, data);
-  const togglePrimary = () => primary?.entityId && svc(
+  const togglePrimary = () => primary?.transportId && svc(
     playingPrimary ? "media_player.media_pause" : "media_player.media_play",
-    { entity_id: primary.entityId }
+    { entity_id: primary.transportId }
   );
-  const skipNext  = () => primary?.entityId && svc("media_player.media_next_track", { entity_id: primary.entityId });
-  const skipPrev  = () => primary?.entityId && svc("media_player.media_previous_track", { entity_id: primary.entityId });
-  const toggleShuffle = () => primary?.entityId && svc("media_player.shuffle_set", {
-    entity_id: primary.entityId,
-    shuffle: !primaryCtrl?.attributes?.shuffle,
+  const skipNext  = () => primary?.transportId && svc("media_player.media_next_track",     { entity_id: primary.transportId });
+  const skipPrev  = () => primary?.transportId && svc("media_player.media_previous_track", { entity_id: primary.transportId });
+  const toggleShuffle = () => primary?.transportId && svc("media_player.shuffle_set", {
+    entity_id: primary.transportId,
+    shuffle: !(primary?.entity?.attributes?.shuffle ?? primaryCtrl?.attributes?.shuffle),
   });
   const toggleRepeat = () => {
-    if (!primary?.entityId) return;
-    const cur = primaryCtrl?.attributes?.repeat || "off";
+    if (!primary?.transportId) return;
+    const cur = primary?.entity?.attributes?.repeat ?? primaryCtrl?.attributes?.repeat ?? "off";
     const next = cur === "off" ? "all" : cur === "all" ? "one" : "off";
-    svc("media_player.repeat_set", { entity_id: primary.entityId, repeat: next });
+    svc("media_player.repeat_set", { entity_id: primary.transportId, repeat: next });
   };
-  const setVol = (v) => primary?.entityId && svc("media_player.volume_set", {
-    entity_id: primary.entityId, volume_level: v / 100,
+  const setVol = (v) => primary?.transportId && svc("media_player.volume_set", {
+    entity_id: primary.transportId, volume_level: v / 100,
   });
-  const seek = (s) => primary?.entityId && svc("media_player.media_seek", {
-    entity_id: primary.entityId, seek_position: s,
+  const seek = (s) => primary?.transportId && svc("media_player.media_seek", {
+    entity_id: primary.transportId, seek_position: s,
   });
   const playMedia = (mediaContentId, mediaContentType) => primary?.entityId && svc("media_player.play_media", {
     entity_id: primary.entityId,
@@ -173,8 +193,8 @@ function MusicPage() {
     media_content_type: mediaContentType,
   });
   const togglePerRoom = (room) => {
-    if (!room.entityId) return;
-    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.entityId });
+    if (!room.transportId) return;
+    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.transportId });
   };
 
   // ─── Drag-to-group ──────────────────────────────────────────────────────
