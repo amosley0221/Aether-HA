@@ -159,58 +159,57 @@ function MusicPage() {
   ]);
 
   // ─── Service helpers ─────────────────────────────────────────────────────
-  // Transport commands go to BOTH the MA wrapper (entityId) and the bare
-  // Sonos entity (transportId) so whichever is the live driver responds —
-  // MA owns the queue state for MA-sourced playback (so resume picks up at
-  // the right track + position), while the bare Sonos entity is what the
-  // hardware actually mirrors. Sending to both is a no-op for the redundant
-  // call but covers all desync modes. Library search + play_media still
-  // hit only the MA wrapper since that's the only entity that implements
-  // those services.
+  // Transport routes through the MA wrapper. MA owns the queue state, so
+  // it knows the right track and offset to resume at. The bare Sonos
+  // entity is great for display (it tracks the hardware in real time) but
+  // sending transport to it loses queue context — pause-of-streaming-URL
+  // becomes stop, resume starts the stream over or advances the queue.
+  // Library search + play_media also hit the MA wrapper.
   const svc = (service, data) => callService(hass, service, data);
-  // Lock the primary the moment the user interacts with it — otherwise
-  // pausing makes "first playing room" rule pick a different room and the
-  // UI flips away from where the user was working.
+  // Lock the primary the moment the user interacts — otherwise pausing
+  // makes "first playing room" rule pick a different room and the UI
+  // flips away from where the user was working.
   const lockPrimary = () => { if (!userSelectedPrimary) setUserSelectedPrimary(true); };
-  // Return [MA wrapper id, bare Sonos id] deduped — used by every transport
-  // call to fan the command out to whichever sibling is the live driver.
-  const transportIds = (room) => {
-    const ids = [room?.entityId, room?.transportId].filter(Boolean);
-    return [...new Set(ids)];
-  };
-  const fanout = (room, service, data = {}) => {
-    transportIds(room).forEach(id => svc(service, { ...data, entity_id: id }));
-  };
   const togglePrimary = () => {
-    if (!primary) return;
+    if (!primary?.entityId) return;
     lockPrimary();
-    fanout(primary, playingPrimary ? "media_player.media_pause" : "media_player.media_play");
+    svc(playingPrimary ? "media_player.media_pause" : "media_player.media_play",
+        { entity_id: primary.entityId });
   };
-  const skipNext  = () => { if (primary) { lockPrimary(); fanout(primary, "media_player.media_next_track"); } };
-  const skipPrev  = () => { if (primary) { lockPrimary(); fanout(primary, "media_player.media_previous_track"); } };
-  const toggleShuffle = () => {
-    if (!primary) return;
+  const skipNext = () => {
+    if (!primary?.entityId) return;
     lockPrimary();
-    fanout(primary, "media_player.shuffle_set", {
+    svc("media_player.media_next_track", { entity_id: primary.entityId });
+  };
+  const skipPrev = () => {
+    if (!primary?.entityId) return;
+    lockPrimary();
+    svc("media_player.media_previous_track", { entity_id: primary.entityId });
+  };
+  const toggleShuffle = () => {
+    if (!primary?.entityId) return;
+    lockPrimary();
+    svc("media_player.shuffle_set", {
+      entity_id: primary.entityId,
       shuffle: !(primary?.entity?.attributes?.shuffle ?? primaryCtrl?.attributes?.shuffle),
     });
   };
   const toggleRepeat = () => {
-    if (!primary) return;
+    if (!primary?.entityId) return;
     lockPrimary();
     const cur = primary?.entity?.attributes?.repeat ?? primaryCtrl?.attributes?.repeat ?? "off";
     const next = cur === "off" ? "all" : cur === "all" ? "one" : "off";
-    fanout(primary, "media_player.repeat_set", { repeat: next });
+    svc("media_player.repeat_set", { entity_id: primary.entityId, repeat: next });
   };
   const setVol = (v) => {
-    if (!primary) return;
+    if (!primary?.entityId) return;
     lockPrimary();
-    fanout(primary, "media_player.volume_set", { volume_level: v / 100 });
+    svc("media_player.volume_set", { entity_id: primary.entityId, volume_level: v / 100 });
   };
   const seek = (s) => {
-    if (!primary) return;
+    if (!primary?.entityId) return;
     lockPrimary();
-    fanout(primary, "media_player.media_seek", { seek_position: s });
+    svc("media_player.media_seek", { entity_id: primary.entityId, seek_position: s });
   };
   const playMedia = (mediaContentId, mediaContentType) => primary?.entityId && svc("media_player.play_media", {
     entity_id: primary.entityId,
@@ -218,8 +217,8 @@ function MusicPage() {
     media_content_type: mediaContentType,
   });
   const togglePerRoom = (room) => {
-    if (!room?.transportId && !room?.entityId) return;
-    fanout(room, room.playing ? "media_player.media_pause" : "media_player.media_play");
+    if (!room?.entityId) return;
+    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.entityId });
   };
 
   // ─── Drag-to-group ──────────────────────────────────────────────────────
