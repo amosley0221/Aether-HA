@@ -173,8 +173,29 @@ function MusicPage() {
   const togglePrimary = () => {
     if (!primary?.entityId) return;
     lockPrimary();
-    svc(playingPrimary ? "media_player.media_pause" : "media_player.media_play",
-        { entity_id: primary.entityId });
+    if (playingPrimary) {
+      svc("media_player.media_pause", { entity_id: primary.entityId });
+      return;
+    }
+    // Resume-from-paused workaround for MA HTTP-streamed playback.
+    // When MA is in flow / HTTP-queue mode, Sonos's stream buffer
+    // expires on pause and a plain media_play restarts the track at
+    // 0:00 (or worse, advances the queue). Fix: read the paused
+    // media_position from the bare Sonos entity, fire media_play to
+    // restart the stream, then seek back to the captured position
+    // once playback resumes. Small (~1s) audio rebuffer is the cost;
+    // queue context is preserved (no play_media re-issue).
+    const a = primary.entity?.attributes || {};
+    const pausedPos = primary.state === "paused" ? (a.media_position || 0) : 0;
+    svc("media_player.media_play", { entity_id: primary.entityId });
+    if (pausedPos > 1) {
+      setTimeout(() => {
+        svc("media_player.media_seek", {
+          entity_id: primary.entityId,
+          seek_position: pausedPos,
+        });
+      }, 1200);
+    }
   };
   const skipNext = () => {
     if (!primary?.entityId) return;
