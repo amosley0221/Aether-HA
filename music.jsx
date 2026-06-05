@@ -159,78 +159,78 @@ function MusicPage() {
   ]);
 
   // ─── Service helpers ─────────────────────────────────────────────────────
-  // Transport routes through the MA wrapper. MA owns the queue state, so
-  // it knows the right track and offset to resume at. The bare Sonos
-  // entity is great for display (it tracks the hardware in real time) but
-  // sending transport to it loses queue context — pause-of-streaming-URL
-  // becomes stop, resume starts the stream over or advances the queue.
-  // Library search + play_media also hit the MA wrapper.
+  // Transport routes through the bare Sonos integration entity (transportId).
+  // Routing transport to the MA wrapper made Sonos treat pause as STOP — the
+  // bare entity dropped to "idle" with no track info, and Aether's display
+  // (which reads the bare entity) flipped to "Nothing Playing". The bare
+  // entity preserves track context across pause natively. Resume needs the
+  // seek-on-replay workaround because MA's HTTP stream buffer expires.
+  // Library search + play_media still hit the MA wrapper (entityId) since
+  // that's the only entity that implements them.
   const svc = (service, data) => callService(hass, service, data);
   // Lock the primary the moment the user interacts — otherwise pausing
   // makes "first playing room" rule pick a different room and the UI
   // flips away from where the user was working.
   const lockPrimary = () => { if (!userSelectedPrimary) setUserSelectedPrimary(true); };
   const togglePrimary = () => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
     if (playingPrimary) {
-      svc("media_player.media_pause", { entity_id: primary.entityId });
+      svc("media_player.media_pause", { entity_id: primary.transportId });
       return;
     }
-    // Resume-from-paused workaround for MA HTTP-streamed playback.
-    // When MA is in flow / HTTP-queue mode, Sonos's stream buffer
-    // expires on pause and a plain media_play restarts the track at
-    // 0:00 (or worse, advances the queue). Fix: read the paused
-    // media_position from the bare Sonos entity, fire media_play to
-    // restart the stream, then seek back to the captured position
-    // once playback resumes. Small (~1s) audio rebuffer is the cost;
-    // queue context is preserved (no play_media re-issue).
+    // Resume from paused: MA's HTTP stream loses its buffer the moment
+    // Sonos pauses, so media_play restarts the track from 0:00. We capture
+    // the paused position off the bare Sonos entity, fire media_play, and
+    // seek back to where we were once playback resumes. Queue context is
+    // preserved (no play_media re-issue), so the next track still
+    // auto-advances. ~1s rebuffer glitch is the trade-off.
     const a = primary.entity?.attributes || {};
     const pausedPos = primary.state === "paused" ? (a.media_position || 0) : 0;
-    svc("media_player.media_play", { entity_id: primary.entityId });
+    svc("media_player.media_play", { entity_id: primary.transportId });
     if (pausedPos > 1) {
       setTimeout(() => {
         svc("media_player.media_seek", {
-          entity_id: primary.entityId,
+          entity_id: primary.transportId,
           seek_position: pausedPos,
         });
       }, 1200);
     }
   };
   const skipNext = () => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
-    svc("media_player.media_next_track", { entity_id: primary.entityId });
+    svc("media_player.media_next_track", { entity_id: primary.transportId });
   };
   const skipPrev = () => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
-    svc("media_player.media_previous_track", { entity_id: primary.entityId });
+    svc("media_player.media_previous_track", { entity_id: primary.transportId });
   };
   const toggleShuffle = () => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
     svc("media_player.shuffle_set", {
-      entity_id: primary.entityId,
+      entity_id: primary.transportId,
       shuffle: !(primary?.entity?.attributes?.shuffle ?? primaryCtrl?.attributes?.shuffle),
     });
   };
   const toggleRepeat = () => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
     const cur = primary?.entity?.attributes?.repeat ?? primaryCtrl?.attributes?.repeat ?? "off";
     const next = cur === "off" ? "all" : cur === "all" ? "one" : "off";
-    svc("media_player.repeat_set", { entity_id: primary.entityId, repeat: next });
+    svc("media_player.repeat_set", { entity_id: primary.transportId, repeat: next });
   };
   const setVol = (v) => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
-    svc("media_player.volume_set", { entity_id: primary.entityId, volume_level: v / 100 });
+    svc("media_player.volume_set", { entity_id: primary.transportId, volume_level: v / 100 });
   };
   const seek = (s) => {
-    if (!primary?.entityId) return;
+    if (!primary?.transportId) return;
     lockPrimary();
-    svc("media_player.media_seek", { entity_id: primary.entityId, seek_position: s });
+    svc("media_player.media_seek", { entity_id: primary.transportId, seek_position: s });
   };
   const playMedia = (mediaContentId, mediaContentType) => primary?.entityId && svc("media_player.play_media", {
     entity_id: primary.entityId,
@@ -238,8 +238,8 @@ function MusicPage() {
     media_content_type: mediaContentType,
   });
   const togglePerRoom = (room) => {
-    if (!room?.entityId) return;
-    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.entityId });
+    if (!room?.transportId) return;
+    svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.transportId });
   };
 
   // ─── Drag-to-group ──────────────────────────────────────────────────────
