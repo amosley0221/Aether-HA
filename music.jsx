@@ -181,81 +181,27 @@ function MusicPage() {
   const togglePrimary = () => {
     if (!primary?.transportId) return;
     lockPrimary();
-    if (playingPrimary) {
-      // Pause: CAPTURE content_id + position SYNCHRONOUSLY before the pause
-      // service call fires. After pause, Sonos internally advances its
-      // queue position (it interprets HTTP stream pause as end-of-stream),
-      // which makes both entities' media_content_id point at the NEXT track
-      // by the time the user taps resume. Snapshotting here ensures resume
-      // re-queues the *actually paused* track.
-      const a  = primary.entity?.attributes || {};
-      const ma = primary.ctrl?.attributes  || {};
-      // Compute live position: media_position is a snapshot at
-      // media_position_updated_at; add elapsed time since for the
-      // true current offset.
-      const updatedAt = a.media_position_updated_at
-        ? new Date(a.media_position_updated_at).getTime()
-        : Date.now();
-      const elapsed = Math.max(0, (Date.now() - updatedAt) / 1000);
-      const livePos = (a.media_position || 0) + elapsed;
-      // Smart content_id picking. MA wrapper goes stale after Sonos auto-
-      // advances through a queue — it keeps reporting the previous track's
-      // content_id while bare Sonos already shows the new one. If MA's
-      // title doesn't match bare Sonos's title, MA is stale: use the bare
-      // entity's content_id (a one-shot HTTP URL but Sonos can replay it
-      // when sent to the bare entity itself). Otherwise prefer MA's
-      // library://track URI which is stable across replays.
-      const aTitle  = a.media_title;
-      const maTitle = ma.media_title;
-      const maStale = aTitle && maTitle && aTitle !== maTitle;
-      const useBare = maStale || !ma.media_content_id;
-      const contentId   = useBare ? (a.media_content_id  || ma.media_content_id)
-                                  : (ma.media_content_id || a.media_content_id);
-      const contentType = useBare ? (a.media_content_type || "music")
-                                  : (ma.media_content_type || "music");
-      // Replay-entity follows content-id format. Bare HTTP URLs need to
-      // go back to the bare entity; MA library URIs need MA wrapper.
-      const replayEntity = useBare ? primary.transportId : primary.entityId;
-      if (contentId) {
-        pausedSnapRef.current[primary.id] = {
-          contentId, contentType, replayEntity,
-          position: livePos,
-          capturedAt: Date.now(),
-        };
-      }
-      svc("media_player.media_pause", { entity_id: primary.transportId });
-      return;
-    }
-    // Resume from paused. Use the captured snapshot (if we have one) to
-    // re-issue play_media with the actually-paused track and seek to its
-    // captured offset. Without the snapshot, Sonos's queue-advance leaves
-    // us with no way to know what we paused — so we fall back to plain play.
-    const snap = pausedSnapRef.current[primary.id];
-    if (snap && snap.contentId) {
-      svc("media_player.play_media", {
-        entity_id: snap.replayEntity || primary.entityId,
-        media_content_id: snap.contentId,
-        media_content_type: snap.contentType,
-      });
-      if (snap.position > 1) {
-        // 2.5s delay gives the stream time to fully start + negotiate
-        // content-length before we seek. Seeking too early on a freshly-
-        // started stream is silently ignored by Sonos (the seek event is
-        // dropped because the stream hasn't reported its length yet).
-        setTimeout(() => {
-          svc("media_player.media_seek", {
-            entity_id: primary.transportId,
-            seek_position: snap.position,
-          });
-        }, 2500);
-      }
-      delete pausedSnapRef.current[primary.id];
-    } else {
-      svc("media_player.media_play", { entity_id: primary.transportId });
-    }
+    // Simple pause / play against the bare Sonos entity. Earlier iterations
+    // tried to "fix" MA-HTTP-streaming's broken pause-resume by capturing
+    // a snapshot of the playing track at pause time, then re-issuing
+    // play_media + seeking on resume. Every variant of that workaround
+    // (seek-first, play-first, snapshot from bare, snapshot from MA,
+    // longer delays) ended up putting Sonos into transient incoherent
+    // states — empty media_title, brief autoplay then stop, returning
+    // to the prior track on resume. Cleaner to accept the limitation:
+    //
+    //   - Pause works
+    //   - Resume may restart the current track from 0:00 or advance the
+    //     queue, depending on how MA is streaming + Sonos's buffer state
+    //
+    // The real fix is upstream — Music Assistant needs to use Sonos's
+    // native protocol (not HTTP streaming) for queue-based playback.
+    // Setting "Preferred Output Protocol: SONOS (native)" in MA isn't
+    // enough on its own; MA also has to actually engage that path,
+    // which depends on the MA version and Sonos firmware.
+    svc(playingPrimary ? "media_player.media_pause" : "media_player.media_play",
+        { entity_id: primary.transportId });
   };
-  // Any deliberate "move on" action clears the captured pause snapshot
-  // so we don't accidentally restore an old track later.
   const clearSnap = () => { if (primary?.id) delete pausedSnapRef.current[primary.id]; };
   const skipNext = () => {
     if (!primary?.transportId) return;
