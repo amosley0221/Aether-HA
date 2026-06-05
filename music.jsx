@@ -179,24 +179,44 @@ function MusicPage() {
       svc("media_player.media_pause", { entity_id: primary.transportId });
       return;
     }
-    // Resume from paused: MA's HTTP stream buffer is gone the moment
-    // Sonos pauses, so a plain media_play makes Sonos see "stream ended"
-    // and advance the queue. Workaround: seek FIRST while still paused —
-    // this tells Sonos to re-establish the stream at the captured offset
-    // without tripping its end-of-stream logic. Then a short delay, then
-    // media_play just unpauses from the re-established position. Queue
-    // context is preserved.
-    const a = primary.entity?.attributes || {};
-    const pausedPos = primary.state === "paused" ? (a.media_position || 0) : 0;
-    if (pausedPos > 1) {
-      svc("media_player.media_seek", {
-        entity_id: primary.transportId,
-        seek_position: pausedPos,
+    // Resume from paused. Sonos cannot resume MA's HTTP stream — its
+    // buffer expires on pause and any subsequent play/seek lands on the
+    // NEXT queue item, not the paused track. Last-resort workaround:
+    // re-issue play_media on the MA wrapper with the SAME content_id
+    // (the library://track/N URI MA tracks the current song by) — this
+    // forces MA to generate a fresh stream URL for the same track. Then
+    // seek to the paused offset once playback is live.
+    //
+    // Side effect: re-issuing play_media replaces the MA queue with just
+    // this one track. Auto-advance to the next track in an album/playlist
+    // stops working after the first pause/resume. The user has to start
+    // a fresh album/playlist to get queue auto-advance back. This is the
+    // honest trade-off; an MA-side fix (HTTP profile with content length,
+    // or true Sonos-native streaming) is the only way to avoid it.
+    const a  = primary.entity?.attributes || {};
+    const ma = primary.ctrl?.attributes  || {};
+    const pausedPos   = primary.state === "paused" ? (a.media_position || 0) : 0;
+    // Prefer MA's content_id (library://track/N URI) — it survives replay.
+    // The bare Sonos's content_id is a single-use HTTP stream URL that
+    // won't replay. Fall back to bare if MA's is unavailable.
+    const contentId   = ma.media_content_id   || a.media_content_id;
+    const contentType = ma.media_content_type || a.media_content_type || "music";
+    if (contentId && primary.state === "paused") {
+      svc("media_player.play_media", {
+        entity_id: primary.entityId,
+        media_content_id: contentId,
+        media_content_type: contentType,
       });
-      setTimeout(() => {
-        svc("media_player.media_play", { entity_id: primary.transportId });
-      }, 500);
+      if (pausedPos > 1) {
+        setTimeout(() => {
+          svc("media_player.media_seek", {
+            entity_id: primary.transportId,
+            seek_position: pausedPos,
+          });
+        }, 1500);
+      }
     } else {
+      // No paused context — plain play (fresh-start case).
       svc("media_player.media_play", { entity_id: primary.transportId });
     }
   };
