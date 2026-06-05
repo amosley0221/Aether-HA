@@ -46,6 +46,12 @@ function MusicPage() {
   const [sourceOpen, setSourceOpen] = React.useState(false);
   const [npFullscreen, setNpFullscreen] = React.useState(false);
 
+  // Per-room snapshot of what was playing when the user paused. Captured
+  // synchronously BEFORE the pause command fires, so Sonos's internal
+  // queue-advance on stream-end can't poison it. Used on resume to
+  // re-issue play_media with the correct (paused) track + position.
+  const pausedSnapRef = React.useRef({});
+
   const railRef        = React.useRef(null);
   const pointerStart   = React.useRef(null);   // {id, x, y}
   const longPressTimer = React.useRef(null);
@@ -176,58 +182,73 @@ function MusicPage() {
     if (!primary?.transportId) return;
     lockPrimary();
     if (playingPrimary) {
+      // Pause: CAPTURE content_id + position SYNCHRONOUSLY before the pause
+      // service call fires. After pause, Sonos internally advances its
+      // queue position (it interprets HTTP stream pause as end-of-stream),
+      // which makes both entities' media_content_id point at the NEXT track
+      // by the time the user taps resume. Snapshotting here ensures resume
+      // re-queues the *actually paused* track.
+      const a  = primary.entity?.attributes || {};
+      const ma = primary.ctrl?.attributes  || {};
+      // Compute live position: media_position is a snapshot at
+      // media_position_updated_at; add elapsed time since for the
+      // true current offset.
+      const updatedAt = a.media_position_updated_at
+        ? new Date(a.media_position_updated_at).getTime()
+        : Date.now();
+      const elapsed = Math.max(0, (Date.now() - updatedAt) / 1000);
+      const livePos = (a.media_position || 0) + elapsed;
+      // Prefer MA's content_id — it's a stable library://track URI that
+      // survives replay. Bare Sonos's URL is one-shot.
+      const contentId   = ma.media_content_id   || a.media_content_id;
+      const contentType = ma.media_content_type || a.media_content_type || "music";
+      if (contentId) {
+        pausedSnapRef.current[primary.id] = {
+          contentId, contentType,
+          position: livePos,
+          capturedAt: Date.now(),
+        };
+      }
       svc("media_player.media_pause", { entity_id: primary.transportId });
       return;
     }
-    // Resume from paused. Sonos cannot resume MA's HTTP stream — its
-    // buffer expires on pause and any subsequent play/seek lands on the
-    // NEXT queue item, not the paused track. Last-resort workaround:
-    // re-issue play_media on the MA wrapper with the SAME content_id
-    // (the library://track/N URI MA tracks the current song by) — this
-    // forces MA to generate a fresh stream URL for the same track. Then
-    // seek to the paused offset once playback is live.
-    //
-    // Side effect: re-issuing play_media replaces the MA queue with just
-    // this one track. Auto-advance to the next track in an album/playlist
-    // stops working after the first pause/resume. The user has to start
-    // a fresh album/playlist to get queue auto-advance back. This is the
-    // honest trade-off; an MA-side fix (HTTP profile with content length,
-    // or true Sonos-native streaming) is the only way to avoid it.
-    const a  = primary.entity?.attributes || {};
-    const ma = primary.ctrl?.attributes  || {};
-    const pausedPos   = primary.state === "paused" ? (a.media_position || 0) : 0;
-    // Prefer MA's content_id (library://track/N URI) — it survives replay.
-    // The bare Sonos's content_id is a single-use HTTP stream URL that
-    // won't replay. Fall back to bare if MA's is unavailable.
-    const contentId   = ma.media_content_id   || a.media_content_id;
-    const contentType = ma.media_content_type || a.media_content_type || "music";
-    if (contentId && primary.state === "paused") {
+    // Resume from paused. Use the captured snapshot (if we have one) to
+    // re-issue play_media with the actually-paused track and seek to its
+    // captured offset. Without the snapshot, Sonos's queue-advance leaves
+    // us with no way to know what we paused — so we fall back to plain play.
+    const snap = pausedSnapRef.current[primary.id];
+    if (snap && snap.contentId) {
       svc("media_player.play_media", {
         entity_id: primary.entityId,
-        media_content_id: contentId,
-        media_content_type: contentType,
+        media_content_id: snap.contentId,
+        media_content_type: snap.contentType,
       });
-      if (pausedPos > 1) {
+      if (snap.position > 1) {
         setTimeout(() => {
           svc("media_player.media_seek", {
             entity_id: primary.transportId,
-            seek_position: pausedPos,
+            seek_position: snap.position,
           });
         }, 1500);
       }
+      delete pausedSnapRef.current[primary.id];
     } else {
-      // No paused context — plain play (fresh-start case).
       svc("media_player.media_play", { entity_id: primary.transportId });
     }
   };
+  // Any deliberate "move on" action clears the captured pause snapshot
+  // so we don't accidentally restore an old track later.
+  const clearSnap = () => { if (primary?.id) delete pausedSnapRef.current[primary.id]; };
   const skipNext = () => {
     if (!primary?.transportId) return;
     lockPrimary();
+    clearSnap();
     svc("media_player.media_next_track", { entity_id: primary.transportId });
   };
   const skipPrev = () => {
     if (!primary?.transportId) return;
     lockPrimary();
+    clearSnap();
     svc("media_player.media_previous_track", { entity_id: primary.transportId });
   };
   const toggleShuffle = () => {
@@ -255,11 +276,15 @@ function MusicPage() {
     lockPrimary();
     svc("media_player.media_seek", { entity_id: primary.transportId, seek_position: s });
   };
-  const playMedia = (mediaContentId, mediaContentType) => primary?.entityId && svc("media_player.play_media", {
-    entity_id: primary.entityId,
-    media_content_id: mediaContentId,
-    media_content_type: mediaContentType,
-  });
+  const playMedia = (mediaContentId, mediaContentType) => {
+    if (!primary?.entityId) return;
+    clearSnap();  // new track from library wipes any stale resume snapshot
+    svc("media_player.play_media", {
+      entity_id: primary.entityId,
+      media_content_id: mediaContentId,
+      media_content_type: mediaContentType,
+    });
+  };
   const togglePerRoom = (room) => {
     if (!room?.transportId) return;
     svc(room.playing ? "media_player.media_pause" : "media_player.media_play", { entity_id: room.transportId });
