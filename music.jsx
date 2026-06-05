@@ -198,13 +198,27 @@ function MusicPage() {
         : Date.now();
       const elapsed = Math.max(0, (Date.now() - updatedAt) / 1000);
       const livePos = (a.media_position || 0) + elapsed;
-      // Prefer MA's content_id — it's a stable library://track URI that
-      // survives replay. Bare Sonos's URL is one-shot.
-      const contentId   = ma.media_content_id   || a.media_content_id;
-      const contentType = ma.media_content_type || a.media_content_type || "music";
+      // Smart content_id picking. MA wrapper goes stale after Sonos auto-
+      // advances through a queue — it keeps reporting the previous track's
+      // content_id while bare Sonos already shows the new one. If MA's
+      // title doesn't match bare Sonos's title, MA is stale: use the bare
+      // entity's content_id (a one-shot HTTP URL but Sonos can replay it
+      // when sent to the bare entity itself). Otherwise prefer MA's
+      // library://track URI which is stable across replays.
+      const aTitle  = a.media_title;
+      const maTitle = ma.media_title;
+      const maStale = aTitle && maTitle && aTitle !== maTitle;
+      const useBare = maStale || !ma.media_content_id;
+      const contentId   = useBare ? (a.media_content_id  || ma.media_content_id)
+                                  : (ma.media_content_id || a.media_content_id);
+      const contentType = useBare ? (a.media_content_type || "music")
+                                  : (ma.media_content_type || "music");
+      // Replay-entity follows content-id format. Bare HTTP URLs need to
+      // go back to the bare entity; MA library URIs need MA wrapper.
+      const replayEntity = useBare ? primary.transportId : primary.entityId;
       if (contentId) {
         pausedSnapRef.current[primary.id] = {
-          contentId, contentType,
+          contentId, contentType, replayEntity,
           position: livePos,
           capturedAt: Date.now(),
         };
@@ -219,17 +233,21 @@ function MusicPage() {
     const snap = pausedSnapRef.current[primary.id];
     if (snap && snap.contentId) {
       svc("media_player.play_media", {
-        entity_id: primary.entityId,
+        entity_id: snap.replayEntity || primary.entityId,
         media_content_id: snap.contentId,
         media_content_type: snap.contentType,
       });
       if (snap.position > 1) {
+        // 2.5s delay gives the stream time to fully start + negotiate
+        // content-length before we seek. Seeking too early on a freshly-
+        // started stream is silently ignored by Sonos (the seek event is
+        // dropped because the stream hasn't reported its length yet).
         setTimeout(() => {
           svc("media_player.media_seek", {
             entity_id: primary.transportId,
             seek_position: snap.position,
           });
-        }, 1500);
+        }, 2500);
       }
       delete pausedSnapRef.current[primary.id];
     } else {
