@@ -179,22 +179,25 @@ function MusicPage() {
       svc("media_player.media_pause", { entity_id: primary.transportId });
       return;
     }
-    // Resume from paused: MA's HTTP stream loses its buffer the moment
-    // Sonos pauses, so media_play restarts the track from 0:00. We capture
-    // the paused position off the bare Sonos entity, fire media_play, and
-    // seek back to where we were once playback resumes. Queue context is
-    // preserved (no play_media re-issue), so the next track still
-    // auto-advances. ~1s rebuffer glitch is the trade-off.
+    // Resume from paused: MA's HTTP stream buffer is gone the moment
+    // Sonos pauses, so a plain media_play makes Sonos see "stream ended"
+    // and advance the queue. Workaround: seek FIRST while still paused —
+    // this tells Sonos to re-establish the stream at the captured offset
+    // without tripping its end-of-stream logic. Then a short delay, then
+    // media_play just unpauses from the re-established position. Queue
+    // context is preserved.
     const a = primary.entity?.attributes || {};
     const pausedPos = primary.state === "paused" ? (a.media_position || 0) : 0;
-    svc("media_player.media_play", { entity_id: primary.transportId });
     if (pausedPos > 1) {
+      svc("media_player.media_seek", {
+        entity_id: primary.transportId,
+        seek_position: pausedPos,
+      });
       setTimeout(() => {
-        svc("media_player.media_seek", {
-          entity_id: primary.transportId,
-          seek_position: pausedPos,
-        });
-      }, 1200);
+        svc("media_player.media_play", { entity_id: primary.transportId });
+      }, 500);
+    } else {
+      svc("media_player.media_play", { entity_id: primary.transportId });
     }
   };
   const skipNext = () => {
